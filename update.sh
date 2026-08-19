@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+# ==============================================================================
+#  ██████╗   ██████╗  ██████╗  █████╗ ███╗   ███╗███████╗██████╗ 
+#  ██╔══██╗ ██╔════╝ ██╔════╝ ██╔══██╗████╗ ████║██╔════╝██╔══██╗
+#  ██████╔╝ ██║  ███╗██║  ███╗███████║██╔████╔██║█████╗  ██████╔╝
+#  ██╔══██╗ ██║   ██║██║   ██║██╔══██║██║╚██╔╝██║██╔══╝  ██╔══██╗
+#  ██║  ██║ ╚██████╔╝╚██████╔╝██║  ██║██║ ╚═╝ ██║███████╗██║  ██║
+#  ╚═╝  ╚═╝  ╚═════╝  ╚═════╝ ╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚═╝  ╚═╝
+#
+#  Product Name : RGGAMER PANEL (Update Suite)
+#  Banner       : RGGAMER PANEL
+#  Creator      : RGGAMER
+#  Repository   : https://github.com/RG1GAMER/PERSNOLY-PANEL3.git
+# ==============================================================================
+
+set -e
+
+REPO_URL="https://github.com/RG1GAMER/PERSNOLY-PANEL3.git"
+
+# Palette
+C_RESET='\033[0m'
+C_BOLD='\033[1m'
+C_VIBRANT_CYAN='\033[38;5;45m'
+C_DEEP_BLUE='\033[38;5;33m'
+C_EMERALD='\033[38;5;48m'
+C_AMBER='\033[38;5;214m'
+C_CRIMSON='\033[38;5;196m'
+C_WHITE='\033[38;5;255m'
+C_MUTED='\033[38;5;244m'
+
+echo ""
+echo -e "${C_VIBRANT_CYAN}${C_BOLD}  ╭──────────────────────────────────────────────────────────────────────────╮${C_RESET}"
+echo -e "${C_VIBRANT_CYAN}${C_BOLD}  │               RGGAMER PANEL - AUTOMATED UPDATE SUITE                     │${C_RESET}"
+echo -e "${C_VIBRANT_CYAN}${C_BOLD}  │                 Credit: RGGAMER  |  RGGAMER PANEL                        │${C_RESET}"
+echo -e "${C_VIBRANT_CYAN}${C_BOLD}  │     Repo: ${C_WHITE}https://github.com/RG1GAMER/PERSNOLY-PANEL3            ${C_VIBRANT_CYAN}${C_BOLD}│${C_RESET}"
+echo -e "${C_VIBRANT_CYAN}${C_BOLD}  ╰──────────────────────────────────────────────────────────────────────────╯${C_RESET}"
+echo ""
+
+# Workspace verification
+if [ ! -f "package.json" ]; then
+    if [ -d "PERSNOLY-PANEL3" ]; then
+        cd PERSNOLY-PANEL3
+    elif [ -d "Jtg" ]; then
+        cd Jtg
+    else
+        echo -e " ${C_CRIMSON}[✗ ERROR]${C_RESET} package.json not found. Please run this script from inside the RGGAMER Panel directory."
+        exit 1
+    fi
+fi
+
+# Ensure git remote is connected to user's repository
+if [ -d ".git" ]; then
+    git remote set-url origin "$REPO_URL" 2>/dev/null || git remote add origin "$REPO_URL" 2>/dev/null || true
+else
+    git init 2>/dev/null || true
+    git remote add origin "$REPO_URL" 2>/dev/null || true
+fi
+
+echo -e " ${C_DEEP_BLUE}[INFO]${C_RESET} Fetching latest updates from ${C_WHITE}${REPO_URL}${C_RESET}..."
+git fetch "$REPO_URL" main 2>/dev/null || git fetch "$REPO_URL" master 2>/dev/null || git fetch origin 2>/dev/null || true
+git pull "$REPO_URL" main 2>/dev/null || git pull "$REPO_URL" master 2>/dev/null || git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || git pull || true
+
+echo -e " ${C_DEEP_BLUE}[INFO]${C_RESET} Refreshing dependencies..."
+npm install --no-audit --no-fund --quiet || true
+
+echo -e " ${C_DEEP_BLUE}[INFO]${C_RESET} Compiling and building latest production release..."
+npm run build || true
+
+echo -e " ${C_DEEP_BLUE}[INFO]${C_RESET} Restarting background service..."
+if command -v systemctl &> /dev/null && systemctl is-active --quiet jtg-panel 2>/dev/null; then
+    sudo systemctl restart jtg-panel || true
+elif command -v pm2 &> /dev/null; then
+    pm2 restart jtg-panel 2>/dev/null || pm2 restart rggamer-panel 2>/dev/null || npx pm2 restart jtg-panel 2>/dev/null || true
+fi
+
+echo ""
+echo -e " ${C_EMERALD}${C_BOLD}[✓ SUCCESS]${C_RESET} ${C_WHITE}RGGAMER Panel has been updated from ${REPO_URL} and restarted successfully!${C_RESET}"
+echo ""
