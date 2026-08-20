@@ -1,10 +1,14 @@
 // @ts-nocheck
-// @ts-nocheck
-import React, { useEffect, useState } from "react"; 
+import React, { useEffect, useState, useMemo } from "react"; 
 import { LoadingOverlay } from "../components/LoadingOverlay";
-import { useParams, Link, Routes, Route, useLocation } from "react-router-dom";
+import { useParams, Link, Routes, Route, useLocation, useNavigate } from "react-router-dom";
 import axios from "axios";
-import { Terminal, Folder, Play, Square, RefreshCw, ArrowLeft, Sliders, Archive, AlertTriangle, Copy, Check, Menu, X, Users, LogOut, Lock } from "lucide-react";
+import { 
+  Terminal, Folder, Play, Square, RefreshCw, ArrowLeft, Sliders, 
+  Archive, AlertTriangle, AlertOctagon, Copy, Check, Menu, X, 
+  Users, LogOut, Lock, Activity, HeartPulse, Zap, Clock, ShieldCheck,
+  Map, Palette, Puzzle, Box, Network, Settings, Globe, ShieldAlert
+} from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 import ServerConsole from "../components/ServerConsole";
@@ -19,23 +23,52 @@ import SubUsersManager from "../components/SubUsersManager";
 import ServerSFTP from "../components/ServerSFTP";
 import PlayitTunnel from "./PlayitTunnel";
 import WorldManager from "../components/WorldManager";
-import { Map, Palette } from "lucide-react";
-import { Puzzle, Box, Network } from "lucide-react";
-import { Settings, Globe } from "lucide-react";
 import { useSettings } from "../context/SettingsContext";
 
+// Format total seconds into standard digital HH:MM:SS or Dd HH:MM:SS
+function formatDuration(totalSeconds: number): string {
+  if (totalSeconds <= 0 || isNaN(totalSeconds)) return "00:00:00";
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const pad = (n: number) => String(n).padStart(2, "0");
+  if (days > 0) {
+    return `${days}d ${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+  }
+  return `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+}
+
+// Format total seconds into compact human duration (e.g. 5m 12s)
+function formatHumanDuration(totalSeconds: number): string {
+  if (totalSeconds <= 0 || isNaN(totalSeconds)) return "0s";
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  const parts: string[] = [];
+  if (days > 0) parts.push(`${days}d`);
+  if (hours > 0) parts.push(`${hours}h`);
+  if (minutes > 0) parts.push(`${minutes}m`);
+  parts.push(`${seconds}s`);
+  return parts.join(" ");
+}
 
 export default function ServerView() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const { enablePlayit } = useSettings();
   const [server, setServer] = useState<any>(null);
   const [totalSystemRam, setTotalSystemRam] = useState<number>(0);
   const [showRamWarning, setShowRamWarning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [actionMessage, setActionMessage] = useState<string>("");
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  
+  const [uptimeSeconds, setUptimeSeconds] = useState<number>(0);
 
   const handleCopyIp = () => {
     if (!server) return;
@@ -57,17 +90,56 @@ export default function ServerView() {
     axios.get("/api/system/stats").then(res => {
       setTotalSystemRam(res.data.totalMemory / (1024 * 1024 * 1024));
     }).catch(() => {});
-    const interval = setInterval(fetchServer, 5000);
+    const interval = setInterval(fetchServer, 4000);
     return () => clearInterval(interval);
   }, [id]);
 
+  // Real-time ticking 1-second interval for live uptime
+  useEffect(() => {
+    const updateTick = () => {
+      if (server?.status === "online" && server?.startedAt) {
+        const startMs = new Date(server.startedAt).getTime();
+        if (!isNaN(startMs) && startMs > 0) {
+          const diff = Math.max(0, Math.floor((Date.now() - startMs) / 1000));
+          setUptimeSeconds(diff);
+          return;
+        }
+      }
+      setUptimeSeconds(0);
+    };
+
+    updateTick();
+    const ticker = setInterval(updateTick, 1000);
+    return () => clearInterval(ticker);
+  }, [server?.status, server?.startedAt]);
+
+  // Derive Process Health status
+  const processHealth: "healthy" | "starting" | "crashed" | "offline" = useMemo(() => {
+    if (!server) return "offline";
+    if (server.crashed || server.health === "crashed") return "crashed";
+    if (server.status !== "online") return "offline";
+    if (server.health === "starting" || uptimeSeconds < 15) return "starting";
+    return "healthy";
+  }, [server, uptimeSeconds]);
+
   const executeAction = async (action: string) => {
     setIsProcessing(true);
+    if (action === "force-restart") {
+      setActionMessage("Force-terminating process and rebuilding runtime...");
+    } else if (action === "restart") {
+      setActionMessage("Restarting server...");
+    } else if (action === "start") {
+      setActionMessage("Starting server...");
+    } else if (action === "stop") {
+      setActionMessage("Stopping server...");
+    }
+
     try {
-       await axios.post(`/api/servers/${id}/${action}`);
-       await fetchServer();
+      await axios.post(`/api/servers/${id}/${action}`);
+      await fetchServer();
     } catch(e) {} finally {
-       setIsProcessing(false);
+      setIsProcessing(false);
+      setActionMessage("");
     }
   };
 
@@ -173,8 +245,6 @@ export default function ServerView() {
       transition={{ duration: 0.3 }}
       className="flex h-full bg-transparent overflow-hidden"
     >
-            
-      
       {/* Drawer Overlay */}
       {sidebarOpen && (
         <div 
@@ -203,20 +273,67 @@ export default function ServerView() {
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1 custom-scrollbar">
           {/* Status & Quick Actions */}
           <div className="mb-4 p-3 bg-black/60 rounded-xl border border-theme-500/20 shadow-inner">
-             <div className="flex items-center space-x-2 mb-3">
-                <span className="flex h-2.5 w-2.5 relative shrink-0">
-                   {server.status === 'online' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-theme-400 opacity-75"></span>}
-                   <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${server.status === 'online' ? 'bg-theme-500' : 'bg-red-500'}`}></span>
-                </span>
-                <span className={`text-xs font-semibold capitalize ${server.status === 'online' ? 'text-theme-400' : 'text-zinc-400'}`}>{server.status}</span>
-                <span className="text-xs text-zinc-600">•</span>
-                <button onClick={handleCopyIp} className="flex items-center space-x-1.5 px-2 py-0.5 rounded-md bg-theme-900/40 hover:bg-theme-500/20 border border-theme-500/30 transition-colors group cursor-pointer truncate" title="Copy Connection Info">
-                  <span className="text-[11px] font-mono text-theme-300 group-hover:text-theme-200 transition-colors truncate">
-                    {server.ipAlias ? `${server.ipAlias}:${server.port}` : server.port}
-                  </span>
-                  {copied ? <Check size={12} className="text-theme-400 shrink-0" /> : <Copy size={12} className="text-theme-400 group-hover:text-theme-300 transition-colors shrink-0" />}
-                </button>
+             
+             {/* Process Health & Status in Sidebar */}
+             <div className="space-y-2 mb-3">
+               <div className="flex items-center justify-between">
+                 <div className="flex items-center space-x-1.5">
+                   <span className="flex h-2.5 w-2.5 relative shrink-0">
+                     {server.status === 'online' && <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-theme-400 opacity-75"></span>}
+                     <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${server.status === 'online' ? 'bg-theme-500' : 'bg-red-500'}`}></span>
+                   </span>
+                   <span className={`text-xs font-semibold capitalize ${server.status === 'online' ? 'text-theme-400' : 'text-zinc-400'}`}>{server.status}</span>
+                 </div>
+                 
+                 <button onClick={handleCopyIp} className="flex items-center space-x-1 px-1.5 py-0.5 rounded bg-theme-900/40 hover:bg-theme-500/20 border border-theme-500/30 transition-colors group cursor-pointer" title="Copy Connection Info">
+                   <span className="text-[10px] font-mono text-theme-300 group-hover:text-theme-200 truncate max-w-[90px]">
+                     :{server.port}
+                   </span>
+                   {copied ? <Check size={11} className="text-theme-400 shrink-0" /> : <Copy size={11} className="text-theme-400 shrink-0" />}
+                 </button>
+               </div>
+
+               {/* Process Health Pill */}
+               <div className="p-2 rounded-lg bg-black/40 border border-white/5 flex flex-col gap-1 text-[11px] font-mono">
+                 <div className="flex items-center justify-between text-zinc-400">
+                   <span className="flex items-center gap-1 text-[10px] uppercase font-bold tracking-wider text-zinc-500">
+                     <Activity size={12} className="text-theme-400" /> Process Health
+                   </span>
+                   
+                   {processHealth === 'healthy' && (
+                     <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" /> Healthy
+                     </span>
+                   )}
+                   {processHealth === 'starting' && (
+                     <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                       <RefreshCw size={10} className="animate-spin text-amber-400" /> Starting
+                     </span>
+                   )}
+                   {processHealth === 'crashed' && (
+                     <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/40 animate-pulse">
+                       <AlertOctagon size={10} className="text-rose-400" /> Crashed
+                     </span>
+                   )}
+                   {processHealth === 'offline' && (
+                     <span className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded text-[10px] font-semibold bg-zinc-800 text-zinc-400 border border-zinc-700">
+                       Offline
+                     </span>
+                   )}
+                 </div>
+
+                 <div className="flex items-center justify-between pt-1 border-t border-white/5 text-[11px] text-theme-300">
+                   <span className="flex items-center gap-1 text-zinc-400 text-[10px]">
+                     <Clock size={11} className="text-theme-400" /> Uptime
+                   </span>
+                   <span className="font-bold tabular-nums">
+                     {server.status === 'online' ? formatDuration(uptimeSeconds) : "00:00:00"}
+                   </span>
+                 </div>
+               </div>
              </div>
+
+             {/* Power Controls Grid */}
              <div className="grid grid-cols-2 gap-2">
                 {server.status !== 'online' ? (
                   <button disabled={isProcessing} onClick={() => { handleAction('start'); setSidebarOpen(false); }} className="col-span-2 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-semibold rounded-lg transition-all border border-emerald-500/40 flex items-center justify-center text-xs shadow-md shadow-emerald-500/10 disabled:opacity-50">
@@ -227,8 +344,19 @@ export default function ServerView() {
                     {isProcessing ? <div className="w-3.5 h-3.5 border-2 border-red-400/50 border-t-red-400 rounded-full animate-spin mr-1.5" /> : <Square className="w-3.5 h-3.5 mr-1.5 fill-red-400/20" />} Stop
                   </button>
                 )}
-                <button disabled={isProcessing} onClick={() => { handleAction('restart'); setSidebarOpen(false); }} className="col-span-2 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-medium rounded-lg transition-all border border-amber-500/40 flex items-center justify-center text-xs shadow-md shadow-amber-500/10 disabled:opacity-50">
-                  {isProcessing ? <div className="w-3.5 h-3.5 border-2 border-amber-400/50 border-t-amber-400 rounded-full animate-spin mr-1.5" /> : <RefreshCw className="w-3.5 h-3.5 mr-1.5" />} Restart
+                
+                <button disabled={isProcessing} onClick={() => { handleAction('restart'); setSidebarOpen(false); }} className="py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-medium rounded-lg transition-all border border-amber-500/40 flex items-center justify-center text-xs shadow-md shadow-amber-500/10 disabled:opacity-50">
+                  {isProcessing ? <div className="w-3.5 h-3.5 border-2 border-amber-400/50 border-t-amber-400 rounded-full animate-spin mr-1" /> : <RefreshCw className="w-3.5 h-3.5 mr-1" />} Restart
+                </button>
+
+                {/* Sidebar Force Restart Button */}
+                <button 
+                  disabled={isProcessing} 
+                  onClick={() => { handleAction('force-restart'); setSidebarOpen(false); }} 
+                  className="py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-medium rounded-lg transition-all border border-rose-500/40 flex items-center justify-center text-xs shadow-md shadow-rose-500/10 disabled:opacity-50"
+                  title="Kill stuck process, clear deadlock, and force restart"
+                >
+                  <Zap className="w-3.5 h-3.5 mr-1 text-rose-400 fill-rose-400/20" /> Force
                 </button>
              </div>
           </div>
@@ -277,10 +405,10 @@ export default function ServerView() {
       </div>
 
       <div className="flex-1 flex flex-col h-full bg-transparent overflow-hidden relative isolate">
-        {/* Top Header with Hamburger and Power Controls */}
-        <div className="bg-black/85 backdrop-blur-2xl border-b border-theme-500/20 p-3 sm:p-4 flex flex-wrap items-center justify-between gap-2.5 shrink-0 shadow-lg shadow-black/80 relative z-20">
+        {/* Top Header with Hamburger, Process Health Status Indicator, and Controls */}
+        <div className="bg-black/85 backdrop-blur-2xl border-b border-theme-500/20 p-2.5 sm:p-3.5 flex flex-wrap items-center justify-between gap-2.5 shrink-0 shadow-lg shadow-black/80 relative z-20">
           
-          {/* Left: Hamburger + Server Name + Status */}
+          {/* Left: Hamburger + Server Name + Basic Status */}
           <div className="flex items-center gap-2.5 min-w-0">
             <button 
               onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -308,16 +436,79 @@ export default function ServerView() {
               </div>
             </div>
           </div>
+
+          {/* Center: Process Health Indicator & Live Real-Time Uptime */}
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-black/60 border border-theme-500/20 shadow-inner backdrop-blur-md">
+            <div className="flex items-center gap-1.5 text-xs font-mono">
+              <span className="text-zinc-400 font-semibold hidden md:inline text-[11px] uppercase tracking-wider">
+                Process Health:
+              </span>
+
+              {processHealth === 'healthy' && (
+                <div 
+                  className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 font-semibold text-xs shadow-sm shadow-emerald-500/10"
+                  title="Server process is active, responding, and healthy."
+                >
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+                  </span>
+                  <Activity size={13} className="text-emerald-400" />
+                  <span>Healthy</span>
+                </div>
+              )}
+
+              {processHealth === 'starting' && (
+                <div 
+                  className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-amber-500/15 border border-amber-500/30 text-amber-300 font-semibold text-xs shadow-sm shadow-amber-500/10"
+                  title="Server process is currently initializing and booting up."
+                >
+                  <RefreshCw size={12} className="animate-spin text-amber-400" />
+                  <span>Starting...</span>
+                </div>
+              )}
+
+              {processHealth === 'crashed' && (
+                <div 
+                  className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-rose-500/20 border border-rose-500/40 text-rose-300 font-semibold text-xs animate-pulse shadow-sm shadow-rose-500/20"
+                  title="Process exited unexpectedly or encountered a crash. Click Force Restart to recover."
+                >
+                  <AlertOctagon size={13} className="text-rose-400" />
+                  <span>Crashed / Stuck</span>
+                </div>
+              )}
+
+              {processHealth === 'offline' && (
+                <div className="flex items-center gap-1.5 px-2.5 py-0.5 rounded-lg bg-zinc-800/60 border border-zinc-700/40 text-zinc-400 font-semibold text-xs">
+                  <span className="w-2 h-2 rounded-full bg-zinc-500"></span>
+                  <span>Offline</span>
+                </div>
+              )}
+            </div>
+
+            <div className="h-3.5 w-px bg-white/10" />
+
+            {/* Real-time Uptime Tracker */}
+            <div 
+              className="flex items-center gap-1.5 text-theme-300 font-mono text-xs font-semibold cursor-help"
+              title={`Real-Time Uptime: ${formatHumanDuration(uptimeSeconds)} (${formatDuration(uptimeSeconds)})`}
+            >
+              <Clock size={13} className={`text-theme-400 ${server.status === 'online' ? 'animate-pulse' : ''}`} />
+              <span className="tabular-nums">
+                {server.status === 'online' ? formatDuration(uptimeSeconds) : "00:00:00"}
+              </span>
+            </div>
+          </div>
           
-          {/* Right: IP Copy Badge + Big Convenient Power Buttons */}
+          {/* Right: IP Copy Badge + Power Controls (Start/Stop, Restart, and Force Restart) */}
           <div className="flex items-center gap-2 sm:gap-2.5 ml-auto shrink-0 flex-wrap sm:flex-nowrap">
             {/* IP Badge */}
             <button 
               onClick={handleCopyIp} 
-              className="flex items-center space-x-1.5 px-3 py-1.5 sm:py-2 rounded-xl bg-theme-900/40 hover:bg-theme-500/20 border border-theme-500/30 transition-all group cursor-pointer shrink-0 shadow-sm" 
+              className="flex items-center space-x-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl bg-theme-900/40 hover:bg-theme-500/20 border border-theme-500/30 transition-all group cursor-pointer shrink-0 shadow-sm" 
               title="Click to copy server address"
             >
-              <span className="text-xs font-mono text-theme-300 group-hover:text-theme-200 transition-colors truncate max-w-[130px] sm:max-w-[200px]">
+              <span className="text-xs font-mono text-theme-300 group-hover:text-theme-200 transition-colors truncate max-w-[120px] sm:max-w-[180px]">
                 {server.ipAlias ? `${server.ipAlias}:${server.port}` : `:${server.port}`}
               </span>
               {copied ? <Check size={13} className="text-theme-400 shrink-0" /> : <Copy size={13} className="text-theme-400 group-hover:text-theme-300 transition-colors shrink-0" />}
@@ -328,13 +519,13 @@ export default function ServerView() {
               <button 
                 disabled={isProcessing} 
                 onClick={() => handleAction('start')} 
-                className="px-3.5 sm:px-4 py-1.5 sm:py-2 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono font-bold rounded-xl transition-all border border-emerald-500/40 flex items-center justify-center text-xs sm:text-sm shadow-lg shadow-emerald-500/10 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5"
+                className="px-3 sm:px-3.5 py-1.5 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-mono font-bold rounded-xl transition-all border border-emerald-500/40 flex items-center justify-center text-xs shadow-lg shadow-emerald-500/10 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5"
                 title="Start Server"
               >
                 {isProcessing ? (
                   <div className="w-3.5 h-3.5 border-2 border-emerald-400/50 border-t-emerald-400 rounded-full animate-spin" />
                 ) : (
-                  <Play className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-emerald-400/20 text-emerald-400" />
+                  <Play className="w-3.5 h-3.5 fill-emerald-400/20 text-emerald-400" />
                 )}
                 <span>Start</span>
               </button>
@@ -342,54 +533,97 @@ export default function ServerView() {
               <button 
                 disabled={isProcessing} 
                 onClick={() => handleAction('stop')} 
-                className="px-3.5 sm:px-4 py-1.5 sm:py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-mono font-bold rounded-xl transition-all border border-rose-500/40 flex items-center justify-center text-xs sm:text-sm shadow-lg shadow-rose-500/10 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5"
+                className="px-3 sm:px-3.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-mono font-bold rounded-xl transition-all border border-rose-500/40 flex items-center justify-center text-xs shadow-lg shadow-rose-500/10 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5"
                 title="Stop Server"
               >
                 {isProcessing ? (
                   <div className="w-3.5 h-3.5 border-2 border-rose-400/50 border-t-rose-400 rounded-full animate-spin" />
                 ) : (
-                  <Square className="w-3.5 h-3.5 sm:w-4 sm:h-4 fill-rose-400/20 text-rose-400" />
+                  <Square className="w-3.5 h-3.5 fill-rose-400/20 text-rose-400" />
                 )}
                 <span>Stop</span>
               </button>
             )}
 
-            {/* Restart Button */}
+            {/* Normal Restart Button */}
             <button 
               disabled={isProcessing} 
               onClick={() => handleAction('restart')} 
-              className="px-3.5 sm:px-4 py-1.5 sm:py-2 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-mono font-bold rounded-xl transition-all border border-amber-500/40 flex items-center justify-center text-xs sm:text-sm shadow-lg shadow-amber-500/10 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5"
-              title="Restart Server"
+              className="px-3 sm:px-3.5 py-1.5 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 font-mono font-bold rounded-xl transition-all border border-amber-500/40 flex items-center justify-center text-xs shadow-lg shadow-amber-500/10 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5"
+              title="Gracefully Restart Server"
             >
               {isProcessing ? (
                 <div className="w-3.5 h-3.5 border-2 border-amber-400/50 border-t-amber-400 rounded-full animate-spin" />
               ) : (
-                <RefreshCw className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-amber-400" />
+                <RefreshCw className="w-3.5 h-3.5 text-amber-400" />
               )}
-              <span>Restart</span>
+              <span className="hidden xs:inline">Restart</span>
+            </button>
+
+            {/* Dedicated Force Restart Button for Stuck Loops */}
+            <button 
+              disabled={isProcessing} 
+              onClick={() => handleAction('force-restart')} 
+              className="px-3 sm:px-3.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 font-mono font-bold rounded-xl transition-all border border-rose-500/40 hover:border-rose-500/70 flex items-center justify-center text-xs shadow-lg shadow-rose-500/15 active:scale-95 disabled:opacity-40 shrink-0 gap-1.5 group"
+              title="Force-terminate stuck processes/containers, clear deadlock, and reboot clean instance"
+            >
+              <Zap className="w-3.5 h-3.5 text-rose-400 fill-rose-400/20 group-hover:scale-110 transition-transform" />
+              <span>Force Restart</span>
             </button>
           </div>
         </div>
+
+        {/* Boot Loop & Crash Recovery Warning Banner */}
+        <AnimatePresence>
+          {(processHealth === 'crashed' || (processHealth === 'starting' && uptimeSeconds > 50)) && (
+            <motion.div 
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              className="bg-rose-950/80 border-b border-rose-500/40 px-4 py-2 flex flex-wrap items-center justify-between gap-3 text-xs text-rose-200 z-10"
+            >
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0 animate-pulse" />
+                <span className="font-medium truncate">
+                  {processHealth === 'crashed'
+                    ? "Warning: Server process stopped unexpectedly or crashed."
+                    : "Notice: Server has been starting for an extended duration and may be stuck in a boot loop."}
+                </span>
+                <span className="text-rose-300/80 hidden sm:inline text-[11px]">
+                  Use Force Restart to kill stuck tasks and rebuild container.
+                </span>
+              </div>
+              
+              <button 
+                onClick={() => handleAction('force-restart')}
+                disabled={isProcessing}
+                className="px-3 py-1 bg-rose-500/30 hover:bg-rose-500/40 text-rose-200 border border-rose-500/50 rounded-lg font-mono font-bold flex items-center gap-1.5 transition-all text-xs active:scale-95 shrink-0"
+              >
+                <Zap className="w-3.5 h-3.5 text-rose-300 fill-rose-400/20" /> Force Restart Now
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <div className="flex-1 relative flex flex-col min-h-0 bg-transparent">
           <div className="flex-1 flex flex-col relative overflow-hidden bg-transparent min-h-0">
             <Routes>
               <Route path="/" element={<ServerConsole serverId={id!} server={server} />} />
-             <Route path="/players" element={<PlayerManager serverId={id!} />} />
-             <Route path="/properties" element={<ServerProperties serverId={id!} />} />
-             <Route path="/world" element={<WorldManager serverId={id!} server={server} onNavigateToFileManager={() => navigate(`/servers/${id}/files`)} />} />
-             <Route path="/files" element={<FileManager serverId={id!} />} />
-             <Route path="/sftp" element={<ServerSFTP serverId={id!} server={server} />} />
-             <Route path="/subusers" element={<SubUsersManager serverId={id!} />} />
-             <Route path="/settings" element={<ServerSettings serverId={id!} server={server} />} />
-             <Route path="/backup" element={<ServerBackups serverId={id!} />} />
-             <Route path="/plugins" element={<PluginManager serverId={id!} />} />
-             <Route path="/mods" element={<ModManager serverId={id!} server={server} initialTab="mods" />} />
-             <Route path="/resourcepacks" element={<ModManager serverId={id!} server={server} initialTab="resourcepacks" />} />
-             {enablePlayit && <Route path="/playit" element={<PlayitTunnel serverId={id!} />} />}
-           </Routes>
+              <Route path="/players" element={<PlayerManager serverId={id!} />} />
+              <Route path="/properties" element={<ServerProperties serverId={id!} />} />
+              <Route path="/world" element={<WorldManager serverId={id!} server={server} onNavigateToFileManager={() => navigate(`/servers/${id}/files`)} />} />
+              <Route path="/files" element={<FileManager serverId={id!} />} />
+              <Route path="/sftp" element={<ServerSFTP serverId={id!} server={server} />} />
+              <Route path="/subusers" element={<SubUsersManager serverId={id!} />} />
+              <Route path="/settings" element={<ServerSettings serverId={id!} server={server} />} />
+              <Route path="/backup" element={<ServerBackups serverId={id!} />} />
+              <Route path="/plugins" element={<PluginManager serverId={id!} />} />
+              <Route path="/mods" element={<ModManager serverId={id!} server={server} initialTab="mods" />} />
+              <Route path="/resourcepacks" element={<ModManager serverId={id!} server={server} initialTab="resourcepacks" />} />
+              {enablePlayit && <Route path="/playit" element={<PlayitTunnel serverId={id!} />} />}
+            </Routes>
+          </div>
         </div>
-      </div>
 
       </div>
 
@@ -435,10 +669,11 @@ export default function ServerView() {
                 </button>
               </div>
             </motion.div>
-                {(isProcessing) && <LoadingOverlay />}
-    </div>
+          </div>
         )}
       </AnimatePresence>
+
+      {isProcessing && <LoadingOverlay message={actionMessage} />}
     </motion.div>
   );
 }

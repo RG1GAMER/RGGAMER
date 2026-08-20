@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react"; 
 import { LoadingOverlay } from "../components/LoadingOverlay";
-import { Trash2, AlertTriangle, User, Save, Globe, RefreshCw, Sliders, Code2, TerminalSquare, Info, Lock, Download, Cpu, HardDrive, Zap, CheckCircle2 } from "lucide-react";
+import { Trash2, AlertTriangle, User, Save, Globe, RefreshCw, Sliders, Code2, TerminalSquare, Info, Lock, Download, Cpu, HardDrive, Zap, CheckCircle2, RotateCcw, Plus, Minus } from "lucide-react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -18,9 +18,9 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
   const [isSavingAlias, setIsSavingAlias] = useState(false);
 
   // Resource Management States
-  const [ram, setRam] = useState<number>(server?.ram || 2);
-  const [cpu, setCpu] = useState<number>(server?.cpu || 100);
-  const [disk, setDisk] = useState<number>(server?.disk || 10);
+  const [ram, setRam] = useState<number | string>(server?.ram ?? 2);
+  const [cpu, setCpu] = useState<number | string>(server?.cpu ?? 100);
+  const [disk, setDisk] = useState<number | string>(server?.disk ?? 10);
   const [isSavingResources, setIsSavingResources] = useState(false);
   const [resourceMessage, setResourceMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   
@@ -28,7 +28,8 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
   const [selectedVersion, setSelectedVersion] = useState(server?.version || "");
   const [selectedType, setSelectedType] = useState((server?.type || "PAPER").toUpperCase());
   const [isChangingVersion, setIsChangingVersion] = useState(false);
-  const [isRedownloadingJar, setIsRedownloadingJar] = useState(false);
+  const [isReinstalling, setIsReinstalling] = useState(false);
+  const [showReinstallConfirm, setShowReinstallConfirm] = useState(false);
   const [versionProgress, setVersionProgress] = useState(0);
   const [javaVersion, setJavaVersion] = useState(server?.javaVersion || "");
   const [dockerImage, setDockerImage] = useState(server?.dockerImage || "");
@@ -60,16 +61,14 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
   }, [server]);
   
   useEffect(() => {
-    // Fetch software versions
+    // Fetch software versions when type changes
     axios.get(`/api/system/versions?type=${selectedType}`).then((res) => {
-      if (Array.isArray(res.data)) {
+      if (Array.isArray(res.data) && res.data.length > 0) {
         const vList = [...res.data];
-        if (selectedVersion && !vList.includes(selectedVersion)) {
-          vList.splice(1, 0, selectedVersion);
-        }
         setVersions(vList);
-        if (!selectedVersion && vList.length > 0) {
-          setSelectedVersion(vList[0]);
+        // If current selected version doesn't exist in the new software type list, pick the first version
+        if (!vList.includes(selectedVersion)) {
+          setSelectedVersion(vList[0] || "");
         }
       } else {
         setVersions([]);
@@ -97,7 +96,6 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
       setShowDeleteConfirm(false);
     }
   };
-
 
   const handleChangeVersion = async () => {
     setIsChangingVersion(true);
@@ -127,15 +125,16 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
     }
   };
 
-  const handleRedownloadJar = async () => {
+  const handleReinstall = async () => {
     try {
-      setIsRedownloadingJar(true);
-      await axios.post(`/api/servers/${serverId}/redownload-jar`);
-      alert("Server JAR has been downloaded and installed successfully!");
+      setIsReinstalling(true);
+      setShowReinstallConfirm(false);
+      await axios.post(`/api/servers/${serverId}/reinstall`);
+      alert("Server software successfully reinstalled and ready!");
     } catch (e: any) {
-      alert("Failed to download JAR: " + (e.response?.data?.error || e.message));
+      alert("Failed to reinstall server: " + (e.response?.data?.error || e.message));
     } finally {
-      setIsRedownloadingJar(false);
+      setIsReinstalling(false);
     }
   };
 
@@ -176,14 +175,26 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
   };
 
   const handleUpdateResources = async () => {
+    const numRam = Math.max(0.5, typeof ram === "number" ? ram : (parseFloat(String(ram)) || 2));
+    const numCpu = Math.max(10, typeof cpu === "number" ? cpu : (parseInt(String(cpu)) || 100));
+    const numDisk = Math.max(1, typeof disk === "number" ? disk : (parseInt(String(disk)) || 10));
+
     try {
       setIsSavingResources(true);
       setResourceMessage(null);
       await axios.put(`/api/servers/${serverId}/resources`, {
-        ram: Number(ram),
-        cpu: Number(cpu),
-        disk: Number(disk)
+        ram: numRam,
+        cpu: numCpu,
+        disk: numDisk
       });
+      if (server) {
+        server.ram = numRam;
+        server.cpu = numCpu;
+        server.disk = numDisk;
+      }
+      setRam(numRam);
+      setCpu(numCpu);
+      setDisk(numDisk);
       setResourceMessage({
         type: "success",
         text: "Resource limits updated and container recreated successfully with dynamic JVM memory calculation."
@@ -200,6 +211,52 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
 
   return (
     <>
+      {showReinstallConfirm && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-zinc-950/95 backdrop-blur-2xl border border-border p-6 md:p-8 rounded-3xl max-w-md w-full shadow-[0_0_50px_-10px_rgba(0,0,0,0.8)] ring-1 ring-border-subtle relative overflow-hidden">
+            <div className="absolute top-0 left-0 w-full h-1.5 bg-gradient-to-r from-theme-600 to-amber-500"></div>
+            <div className="flex items-start mb-4">
+              <div className="bg-theme-600/20 p-3 rounded-2xl mr-4 text-theme-500">
+                <RotateCcw className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-lg font-bold text-foreground mb-1">Reinstall Server Software</h3>
+                <p className="text-sm text-muted-foreground leading-relaxed">
+                  This will cleanly download and install the official server software (<span className="text-theme-400 font-semibold">{selectedType} {selectedVersion}</span>). Your world, plugin configurations, and player data will remain safe.
+                </p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-3 mt-6">
+              <button
+                onClick={() => setShowReinstallConfirm(false)}
+                disabled={isReinstalling}
+                className="px-5 py-2.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 font-medium rounded-xl transition-all disabled:opacity-50 text-sm"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleReinstall}
+                disabled={isReinstalling}
+                className="px-6 py-2.5 bg-theme-600 hover:bg-theme-500 text-white font-semibold rounded-xl transition-all shadow-lg shadow-theme-600/20 disabled:opacity-50 text-sm flex items-center gap-2"
+              >
+                {isReinstalling ? (
+                  <>
+                    <RefreshCw className="w-4 h-4 animate-spin" />
+                    Reinstalling...
+                  </>
+                ) : (
+                  <>
+                    <RotateCcw className="w-4 h-4" />
+                    Confirm Reinstall
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showDowngradeRestartPopup && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
           <div className="bg-black/60 backdrop-blur-2xl border border-border p-6 md:p-8 rounded-3xl max-w-md w-full shadow-[0_0_50px_-10px_rgba(0,0,0,0.8)] ring-1 ring-border-subtle relative overflow-hidden">
@@ -542,21 +599,21 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
                   <div className="flex justify-end gap-3 mt-4">
                     {!["NODEJS", "NODE", "PYTHON", "PYTHON3"].includes(selectedType) && (
                       <button 
-                        onClick={handleRedownloadJar}
-                        disabled={isRedownloadingJar || isChangingVersion}
-                        className="px-5 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-xl border border-zinc-700 transition-all disabled:opacity-50 flex items-center justify-center h-[50px]"
-                        title="Force re-download server.jar from official mirror"
+                        onClick={() => setShowReinstallConfirm(true)}
+                        disabled={isReinstalling || isChangingVersion}
+                        className="px-5 py-3 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium rounded-xl border border-zinc-700 transition-all disabled:opacity-50 flex items-center justify-center h-[50px] active:scale-[0.98]"
+                        title="Cleanly reinstall server software JAR from official mirror"
                       >
-                        <Download className={`w-4 h-4 mr-2 ${isRedownloadingJar ? "animate-bounce" : ""}`} />
-                        {isRedownloadingJar ? "Downloading JAR..." : "Re-download JAR"}
+                        <RotateCcw className={`w-4 h-4 mr-2 ${isReinstalling ? "animate-spin" : ""}`} />
+                        {isReinstalling ? "Reinstalling..." : "Reinstall Server"}
                       </button>
                     )}
                     <button 
                       onClick={handleChangeVersion}
-                      disabled={isChangingVersion || isRedownloadingJar}
-                      className="px-6 py-3 bg-theme-600/10 hover:bg-theme-600/20 text-theme-600 font-medium rounded-xl border border-theme-600/20 transition-all disabled:opacity-50 flex items-center min-w-[160px] justify-center h-[50px]"
+                      disabled={isChangingVersion || isReinstalling}
+                      className="px-6 py-3 bg-theme-600/10 hover:bg-theme-600/20 text-theme-500 hover:text-theme-400 font-medium rounded-xl border border-theme-600/20 transition-all disabled:opacity-50 flex items-center min-w-[160px] justify-center h-[50px]"
                     >
-                      {isChangingVersion ? "Updating..." : "Update Runtime"}
+                      {isChangingVersion ? "Updating & Installing..." : "Update Runtime"}
                     </button>
                   </div>
                   {isChangingVersion && (
@@ -618,62 +675,273 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
                     Adjust resource limits allocated to this server. Updating resources dynamically calculates JVM heap allocation with off-heap safety headroom and recreates the container to apply strict limits.
                   </p>
 
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
                     {/* RAM */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                        <span className="flex items-center"><Zap className="w-3.5 h-3.5 mr-1 text-theme-500" /> RAM (GB)</span>
-                        <span className="text-foreground font-mono font-bold">{ram} GB ({Math.round(ram * 1024)} MB)</span>
-                      </label>
-                      <input 
-                        type="number" 
-                        min="0.5" 
-                        max="128" 
-                        step="0.5"
-                        value={ram}
-                        onChange={e => setRam(Math.max(0.5, parseFloat(e.target.value) || 0.5))}
-                        className="w-full bg-card border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-4 py-2.5 text-foreground transition-all shadow-inner outline-none font-mono"
-                      />
-                    </div>
+                    {(() => {
+                      const numRam = typeof ram === "number" ? ram : (parseFloat(String(ram)) || 0);
+                      const presets = [1, 2, 4, 6, 8, 12, 16, 32];
+                      return (
+                        <div className="bg-card/40 border border-border/70 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center">
+                              <Zap className="w-3.5 h-3.5 mr-1 text-theme-500" /> RAM (GB)
+                            </label>
+                            <span className="text-foreground font-mono text-xs font-bold bg-theme-600/10 px-2 py-0.5 rounded-md border border-theme-600/20 text-theme-500">
+                              {numRam > 0 ? `${Math.round(numRam * 1024)} MB` : "—"}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = typeof ram === "number" ? ram : (parseFloat(String(ram)) || 2);
+                                setRam(Math.max(0.5, Number((curr - 0.5).toFixed(1))));
+                              }}
+                              className="p-2.5 bg-card hover:bg-zinc-800 border border-border rounded-xl text-foreground active:scale-95 transition-all"
+                              title="Decrease 0.5 GB"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <input 
+                              type="number" 
+                              min="0.5" 
+                              max="128" 
+                              step="0.5"
+                              value={ram}
+                              onChange={e => setRam(e.target.value)}
+                              onBlur={() => {
+                                if (ram === "" || isNaN(Number(ram)) || Number(ram) < 0.5) {
+                                  setRam(0.5);
+                                } else {
+                                  setRam(Number(parseFloat(String(ram)).toFixed(1)));
+                                }
+                              }}
+                              placeholder="e.g. 4"
+                              className="w-full bg-background border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-3 py-2 text-foreground font-mono font-bold text-center text-sm outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = typeof ram === "number" ? ram : (parseFloat(String(ram)) || 2);
+                                setRam(Number((curr + 0.5).toFixed(1)));
+                              }}
+                              className="p-2.5 bg-card hover:bg-zinc-800 border border-border rounded-xl text-foreground active:scale-95 transition-all"
+                              title="Increase 0.5 GB"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <input
+                            type="range"
+                            min="0.5"
+                            max="64"
+                            step="0.5"
+                            value={numRam || 0.5}
+                            onChange={e => setRam(parseFloat(e.target.value))}
+                            className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-theme-600"
+                          />
+
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {presets.map(p => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setRam(p)}
+                                className={`text-[11px] font-mono px-2 py-0.5 rounded-lg border transition-all ${
+                                  numRam === p 
+                                    ? "bg-theme-600 text-black border-theme-500 font-bold" 
+                                    : "bg-background/80 hover:bg-zinc-800 text-muted-foreground border-border/80"
+                                }`}
+                              >
+                                {p}G
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* CPU */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                        <span className="flex items-center"><Cpu className="w-3.5 h-3.5 mr-1 text-theme-500" /> CPU Limit (%)</span>
-                        <span className="text-foreground font-mono font-bold">{cpu}%</span>
-                      </label>
-                      <input 
-                        type="number" 
-                        min="10" 
-                        max="1600" 
-                        step="10"
-                        value={cpu}
-                        onChange={e => setCpu(Math.max(10, parseInt(e.target.value) || 10))}
-                        className="w-full bg-card border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-4 py-2.5 text-foreground transition-all shadow-inner outline-none font-mono"
-                      />
-                    </div>
+                    {(() => {
+                      const numCpu = typeof cpu === "number" ? cpu : (parseInt(String(cpu)) || 0);
+                      const presets = [50, 100, 200, 400, 800];
+                      return (
+                        <div className="bg-card/40 border border-border/70 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center">
+                              <Cpu className="w-3.5 h-3.5 mr-1 text-theme-500" /> CPU Limit (%)
+                            </label>
+                            <span className="text-foreground font-mono text-xs font-bold bg-theme-600/10 px-2 py-0.5 rounded-md border border-theme-600/20 text-theme-500">
+                              {numCpu > 0 ? `~${(numCpu / 100).toFixed(1)} vCPU` : "—"}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = typeof cpu === "number" ? cpu : (parseInt(String(cpu)) || 100);
+                                setCpu(Math.max(10, curr - 25));
+                              }}
+                              className="p-2.5 bg-card hover:bg-zinc-800 border border-border rounded-xl text-foreground active:scale-95 transition-all"
+                              title="Decrease 25%"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <input 
+                              type="number" 
+                              min="10" 
+                              max="1600" 
+                              step="10"
+                              value={cpu}
+                              onChange={e => setCpu(e.target.value)}
+                              onBlur={() => {
+                                if (cpu === "" || isNaN(Number(cpu)) || Number(cpu) < 10) {
+                                  setCpu(10);
+                                } else {
+                                  setCpu(Math.round(Number(cpu)));
+                                }
+                              }}
+                              placeholder="e.g. 200"
+                              className="w-full bg-background border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-3 py-2 text-foreground font-mono font-bold text-center text-sm outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = typeof cpu === "number" ? cpu : (parseInt(String(cpu)) || 100);
+                                setCpu(curr + 25);
+                              }}
+                              className="p-2.5 bg-card hover:bg-zinc-800 border border-border rounded-xl text-foreground active:scale-95 transition-all"
+                              title="Increase 25%"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <input
+                            type="range"
+                            min="10"
+                            max="800"
+                            step="10"
+                            value={numCpu || 10}
+                            onChange={e => setCpu(parseInt(e.target.value))}
+                            className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-theme-600"
+                          />
+
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {presets.map(p => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setCpu(p)}
+                                className={`text-[11px] font-mono px-2 py-0.5 rounded-lg border transition-all ${
+                                  numCpu === p 
+                                    ? "bg-theme-600 text-black border-theme-500 font-bold" 
+                                    : "bg-background/80 hover:bg-zinc-800 text-muted-foreground border-border/80"
+                                }`}
+                              >
+                                {p}%
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
 
                     {/* Disk */}
-                    <div className="space-y-2">
-                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
-                        <span className="flex items-center"><HardDrive className="w-3.5 h-3.5 mr-1 text-theme-500" /> Disk Space (GB)</span>
-                        <span className="text-foreground font-mono font-bold">{disk} GB</span>
-                      </label>
-                      <input 
-                        type="number" 
-                        min="1" 
-                        max="1000" 
-                        step="1"
-                        value={disk}
-                        onChange={e => setDisk(Math.max(1, parseInt(e.target.value) || 1))}
-                        className="w-full bg-card border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-4 py-2.5 text-foreground transition-all shadow-inner outline-none font-mono"
-                      />
-                    </div>
+                    {(() => {
+                      const numDisk = typeof disk === "number" ? disk : (parseInt(String(disk)) || 0);
+                      const presets = [5, 10, 25, 50, 100, 200];
+                      return (
+                        <div className="bg-card/40 border border-border/70 rounded-2xl p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center">
+                              <HardDrive className="w-3.5 h-3.5 mr-1 text-theme-500" /> Disk Space (GB)
+                            </label>
+                            <span className="text-foreground font-mono text-xs font-bold bg-theme-600/10 px-2 py-0.5 rounded-md border border-theme-600/20 text-theme-500">
+                              {numDisk > 0 ? `${numDisk} GB` : "—"}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = typeof disk === "number" ? disk : (parseInt(String(disk)) || 10);
+                                setDisk(Math.max(1, curr - 5));
+                              }}
+                              className="p-2.5 bg-card hover:bg-zinc-800 border border-border rounded-xl text-foreground active:scale-95 transition-all"
+                              title="Decrease 5 GB"
+                            >
+                              <Minus className="w-4 h-4" />
+                            </button>
+                            <input 
+                              type="number" 
+                              min="1" 
+                              max="1000" 
+                              step="1"
+                              value={disk}
+                              onChange={e => setDisk(e.target.value)}
+                              onBlur={() => {
+                                if (disk === "" || isNaN(Number(disk)) || Number(disk) < 1) {
+                                  setDisk(1);
+                                } else {
+                                  setDisk(Math.round(Number(disk)));
+                                }
+                              }}
+                              placeholder="e.g. 25"
+                              className="w-full bg-background border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-3 py-2 text-foreground font-mono font-bold text-center text-sm outline-none transition-all"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const curr = typeof disk === "number" ? disk : (parseInt(String(disk)) || 10);
+                                setDisk(curr + 5);
+                              }}
+                              className="p-2.5 bg-card hover:bg-zinc-800 border border-border rounded-xl text-foreground active:scale-95 transition-all"
+                              title="Increase 5 GB"
+                            >
+                              <Plus className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <input
+                            type="range"
+                            min="1"
+                            max="200"
+                            step="1"
+                            value={numDisk || 1}
+                            onChange={e => setDisk(parseInt(e.target.value))}
+                            className="w-full h-1.5 bg-zinc-800 rounded-lg appearance-none cursor-pointer accent-theme-600"
+                          />
+
+                          <div className="flex flex-wrap gap-1.5 pt-1">
+                            {presets.map(p => (
+                              <button
+                                key={p}
+                                type="button"
+                                onClick={() => setDisk(p)}
+                                className={`text-[11px] font-mono px-2 py-0.5 rounded-lg border transition-all ${
+                                  numDisk === p 
+                                    ? "bg-theme-600 text-black border-theme-500 font-bold" 
+                                    : "bg-background/80 hover:bg-zinc-800 text-muted-foreground border-border/80"
+                                }`}
+                              >
+                                {p}G
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Dynamic JVM Calculation Live Preview */}
                   {(() => {
-                    const totalMb = Math.round((ram || 2) * 1024);
+                    const parsedRam = typeof ram === "number" ? ram : (parseFloat(String(ram)) || 2);
+                    const totalMb = Math.round(Math.max(0.5, parsedRam) * 1024);
                     const headroomMb = Math.max(384, Math.min(2048, Math.round(totalMb * 0.14)));
                     const heapMaxMb = Math.max(256, totalMb - headroomMb);
                     const heapInitMb = Math.max(128, Math.min(1024, Math.round(heapMaxMb * 0.25)));
@@ -720,13 +988,22 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
                   )}
 
                   <div className="flex justify-end">
-                    <button 
-                      onClick={handleUpdateResources}
-                      disabled={isSavingResources || (ram === server.ram && cpu === server.cpu && disk === server.disk)}
-                      className="px-6 py-2.5 bg-theme-600 hover:bg-theme-500 text-black font-semibold rounded-xl transition-all disabled:opacity-50 flex items-center shadow-lg shadow-theme-600/20"
-                    >
-                      <Save className="w-4 h-4 mr-2" /> {isSavingResources ? "Recreating Container..." : "Apply & Recreate Container"}
-                    </button>
+                    {(() => {
+                      const numRam = typeof ram === "number" ? ram : (parseFloat(String(ram)) || 2);
+                      const numCpu = typeof cpu === "number" ? cpu : (parseInt(String(cpu)) || 100);
+                      const numDisk = typeof disk === "number" ? disk : (parseInt(String(disk)) || 10);
+                      const isUnchanged = numRam === Number(server.ram || 2) && numCpu === Number(server.cpu || 100) && numDisk === Number(server.disk || 10);
+                      
+                      return (
+                        <button 
+                          onClick={handleUpdateResources}
+                          disabled={isSavingResources || isUnchanged}
+                          className="px-6 py-2.5 bg-theme-600 hover:bg-theme-500 text-white font-semibold rounded-xl transition-all disabled:opacity-50 flex items-center shadow-lg shadow-theme-600/20 active:scale-[0.98]"
+                        >
+                          <Save className="w-4 h-4 mr-2" /> {isSavingResources ? "Recreating Container..." : "Apply & Recreate Container"}
+                        </button>
+                      );
+                    })()}
                   </div>
                 </div>
 

@@ -86,7 +86,52 @@ export const downloadJar = async (type: string, version: string, destPath: strin
   // Build ordered list of candidate download URLs
   const urls: string[] = [];
 
-  if (normType === "folia") {
+  if (normType === "paper") {
+    // Primary for Paper: PaperMC API v2
+    try {
+      const paperVerRes = await axios.get(`https://api.papermc.io/v2/projects/paper/versions/${normVersion}`, {
+        headers: DEFAULT_HEADERS,
+        timeout: 6000
+      });
+      const builds = paperVerRes.data?.builds;
+      if (Array.isArray(builds) && builds.length > 0) {
+        const latestBuild = builds[builds.length - 1];
+        const directUrl = `https://api.papermc.io/v2/projects/paper/versions/${normVersion}/builds/${latestBuild}/downloads/paper-${normVersion}-${latestBuild}.jar`;
+        urls.push(directUrl);
+      }
+    } catch (e) {}
+
+    // Secondary for Paper: Fill v3 API
+    try {
+      const paperMeta = await axios.get(`https://fill.papermc.io/v3/projects/paper/versions/${normVersion}/builds/latest`, {
+        headers: DEFAULT_HEADERS,
+        timeout: 6000
+      });
+      const dlUrl = paperMeta.data?.downloads?.["server:default"]?.url || paperMeta.data?.downloads?.application?.url;
+      if (dlUrl && !urls.includes(dlUrl)) {
+        urls.push(dlUrl);
+      }
+    } catch (e) {}
+
+    // Fallback: getbukkit mirror
+    urls.push(`https://download.getbukkit.org/paper/paper-${normVersion}.jar`);
+
+    // Fallback: 1.21.4 latest Paper build if version is unusual
+    if (normVersion !== "1.21.4") {
+      try {
+        const fbVerRes = await axios.get(`https://api.papermc.io/v2/projects/paper/versions/1.21.4`, {
+          headers: DEFAULT_HEADERS,
+          timeout: 6000
+        });
+        const builds = fbVerRes.data?.builds;
+        if (Array.isArray(builds) && builds.length > 0) {
+          const latestBuild = builds[builds.length - 1];
+          const directUrl = `https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/${latestBuild}/downloads/paper-1.21.4-${latestBuild}.jar`;
+          if (!urls.includes(directUrl)) urls.push(directUrl);
+        }
+      } catch (e) {}
+    }
+  } else if (normType === "folia") {
     try {
       const foliaVerRes = await axios.get(`https://api.papermc.io/v2/projects/folia/versions/${mcCompatVersion}`, { headers: DEFAULT_HEADERS, timeout: 6000 });
       const builds = foliaVerRes.data?.builds;
@@ -95,11 +140,26 @@ export const downloadJar = async (type: string, version: string, destPath: strin
         urls.push(`https://api.papermc.io/v2/projects/folia/versions/${mcCompatVersion}/builds/${latestBuild}/downloads/folia-${mcCompatVersion}-${latestBuild}.jar`);
       }
     } catch (e) {}
+    try {
+      const foliaMeta = await axios.get(`https://fill.papermc.io/v3/projects/folia/versions/${mcCompatVersion}/builds/latest`, { headers: DEFAULT_HEADERS, timeout: 6000 });
+      const dlUrl = foliaMeta.data?.downloads?.["server:default"]?.url || foliaMeta.data?.downloads?.application?.url;
+      if (dlUrl && !urls.includes(dlUrl)) urls.push(dlUrl);
+    } catch (e) {}
   } else if (normType === "bungeecord" || normType === "waterfall") {
     urls.push(
       "https://ci.md-5.net/job/BungeeCord/lastSuccessfulBuild/artifact/bootstrap/target/BungeeCord.jar",
       "https://hub.spigotmc.org/jenkins/job/BungeeCord/lastSuccessfulBuild/artifact/bootstrap/target/BungeeCord.jar"
     );
+    if (normType === "waterfall") {
+      try {
+        const wfRes = await axios.get("https://api.papermc.io/v2/projects/waterfall/versions/1.20", { headers: DEFAULT_HEADERS, timeout: 6000 });
+        const builds = wfRes.data?.builds;
+        if (Array.isArray(builds) && builds.length > 0) {
+          const latestBuild = builds[builds.length - 1];
+          urls.unshift(`https://api.papermc.io/v2/projects/waterfall/versions/1.20/builds/${latestBuild}/downloads/waterfall-1.20-${latestBuild}.jar`);
+        }
+      } catch (e) {}
+    }
   } else if (normType === "velocity") {
     // PaperMC v2 API for Velocity
     try {
@@ -116,12 +176,13 @@ export const downloadJar = async (type: string, version: string, destPath: strin
         timeout: 6000
       });
       const dlUrl = veloMeta.data?.downloads?.["server:default"]?.url || veloMeta.data?.downloads?.application?.url;
-      if (dlUrl) urls.push(dlUrl);
+      if (dlUrl && !urls.includes(dlUrl)) urls.push(dlUrl);
     } catch (e) {}
     urls.push("https://ci.md-5.net/job/BungeeCord/lastSuccessfulBuild/artifact/bootstrap/target/BungeeCord.jar");
   } else if (normType === "purpur") {
     urls.push(
       `https://api.purpurmc.org/v2/purpur/${normVersion}/latest/download`,
+      `https://api.purpurmc.org/v2/purpur/${mcCompatVersion}/latest/download`,
       `https://api.purpurmc.org/v2/purpur/1.21.4/latest/download`
     );
   } else if (normType === "forge") {
@@ -166,50 +227,9 @@ export const downloadJar = async (type: string, version: string, destPath: strin
   } else if (normType === "spigot") {
     urls.push(
       `https://download.getbukkit.org/spigot/spigot-${normVersion}.jar`,
+      `https://cdn.getbukkit.org/spigot/spigot-${normVersion}.jar`,
       `https://download.getbukkit.org/spigot/spigot-1.21.4.jar`
     );
-  }
-
-  // Primary for Paper: PaperMC API v2
-  try {
-    const paperVerRes = await axios.get(`https://api.papermc.io/v2/projects/paper/versions/${normVersion}`, {
-      headers: DEFAULT_HEADERS,
-      timeout: 6000
-    });
-    const builds = paperVerRes.data?.builds;
-    if (Array.isArray(builds) && builds.length > 0) {
-      const latestBuild = builds[builds.length - 1];
-      const directUrl = `https://api.papermc.io/v2/projects/paper/versions/${normVersion}/builds/${latestBuild}/downloads/paper-${normVersion}-${latestBuild}.jar`;
-      urls.unshift(directUrl);
-    }
-  } catch (e) {}
-
-  // Secondary for Paper: Fill v3 API
-  try {
-    const paperMeta = await axios.get(`https://fill.papermc.io/v3/projects/paper/versions/${normVersion}/builds/latest`, {
-      headers: DEFAULT_HEADERS,
-      timeout: 6000
-    });
-    const dlUrl = paperMeta.data?.downloads?.["server:default"]?.url || paperMeta.data?.downloads?.application?.url;
-    if (dlUrl && !urls.includes(dlUrl)) {
-      urls.push(dlUrl);
-    }
-  } catch (e) {}
-
-  // Fallback: 1.21.4 latest Paper build
-  if (normVersion !== "1.21.4") {
-    try {
-      const fbVerRes = await axios.get(`https://api.papermc.io/v2/projects/paper/versions/1.21.4`, {
-        headers: DEFAULT_HEADERS,
-        timeout: 6000
-      });
-      const builds = fbVerRes.data?.builds;
-      if (Array.isArray(builds) && builds.length > 0) {
-        const latestBuild = builds[builds.length - 1];
-        const directUrl = `https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/${latestBuild}/downloads/paper-1.21.4-${latestBuild}.jar`;
-        if (!urls.includes(directUrl)) urls.push(directUrl);
-      }
-    } catch (e) {}
   }
 
   let success = false;

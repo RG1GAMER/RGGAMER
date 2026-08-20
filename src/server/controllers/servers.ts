@@ -76,6 +76,31 @@ export const getServer = async (req: Request, res: Response) => {
   const isRunning = !!status?.State?.Running;
   server.status = isRunning ? "online" : "offline";
   server.startedAt = isRunning ? (status?.State?.StartedAt || server.startedAt || new Date().toISOString()) : null;
+
+  let uptimeSeconds = 0;
+  if (isRunning && server.startedAt) {
+    const startedMs = new Date(server.startedAt).getTime();
+    if (!isNaN(startedMs) && startedMs > 0) {
+      uptimeSeconds = Math.max(0, Math.floor((Date.now() - startedMs) / 1000));
+    }
+  }
+
+  let health: "healthy" | "starting" | "crashed" | "offline" = "offline";
+  if (isRunning) {
+    if (server.crashed) {
+      health = "crashed";
+    } else if (uptimeSeconds < 12) {
+      health = "starting";
+    } else {
+      health = "healthy";
+    }
+  } else if (server.crashed) {
+    health = "crashed";
+  }
+
+  server.health = health;
+  server.uptimeSeconds = uptimeSeconds;
+
   if (server.runtimeType === 'local') {
       const info = getLocalProcessInfo(server.id);
       if (info) {
@@ -114,6 +139,19 @@ export const getServerStats = async (req: Request, res: Response) => {
     }
   }
 
+  let health: "healthy" | "starting" | "crashed" | "offline" = "offline";
+  if (isRunning) {
+    if (server.crashed) {
+      health = "crashed";
+    } else if (uptimeSeconds < 12) {
+      health = "starting";
+    } else {
+      health = "healthy";
+    }
+  } else if (server.crashed) {
+    health = "crashed";
+  }
+
   if (server.containerId) {
     const stats = await getServerRuntimeStats(server);
     res.json({
@@ -122,6 +160,7 @@ export const getServerStats = async (req: Request, res: Response) => {
       diskMB: stats?.diskMB !== undefined ? stats.diskMB : diskMB,
       isRunning,
       status: isRunning ? "online" : "offline",
+      health,
       startedAt,
       uptimeSeconds,
       limitRam: server.ram ? server.ram * 1024 : 1024,
@@ -136,6 +175,7 @@ export const getServerStats = async (req: Request, res: Response) => {
       diskMB: diskMB,
       isRunning: false,
       status: "offline",
+      health: server.crashed ? "crashed" : "offline",
       startedAt: null,
       uptimeSeconds: 0,
       limitRam: server.ram ? server.ram * 1024 : 1024,
@@ -535,10 +575,52 @@ export const restartServer = async (req: Request, res: Response) => {
       }
     }
     await attachServerRuntimeSocket(server, server.id);
-    res.json({ success: true, startedAt: server.startedAt });
+    res.json({ success: true, startedAt: server.startedAt, health: "starting" });
   } catch (err: any) {
     console.error("Restart server error:", err);
     res.status(500).json({ error: err.message || "Failed to restart server" });
+  }
+};
+
+export const forceRestartServer = async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const servers = await readJSON("servers.json") || [];
+    const server = servers.find((s: any) => s.id === id);
+    if (!server || !server.containerId) {
+      return res.status(404).json({ error: "Not found" });
+    }
+
+    const io = req.app.get("io");
+    if (io) {
+      io.to(`server_${id}`).emit("log", "\r\n\x1b[33;1m[Process Watchdog] Force-restart triggered by user. Forcibly terminating process and rebuilding container...\x1b[0m\r\n");
+    }
+
+    try {
+      await stopServerRuntime(server);
+    } catch (e) {}
+
+    // Force recreate container/process to clear corrupt state or deadlocked loop
+    try {
+      await deleteServerRuntime(server);
+    } catch (e) {}
+
+    server.containerId = await createServerRuntime(server);
+    await startServerRuntime(server);
+    server.status = "online";
+    server.startedAt = new Date().toISOString();
+    server.crashed = false;
+    server.health = "starting";
+    await writeJSON("servers.json", servers);
+
+    await attachServerRuntimeSocket(server, server.id);
+    if (io) {
+      io.to(`server_${id}`).emit("log", `\r\n\x1b[32;1m[Process Watchdog] Fresh instance launched successfully. Process health: Starting.\x1b[0m\r\n`);
+    }
+    res.json({ success: true, startedAt: server.startedAt, status: "online", health: "starting" });
+  } catch (err: any) {
+    console.error("Force restart server error:", err);
+    res.status(500).json({ error: err.message || "Failed to force restart server" });
   }
 };
 
@@ -637,9 +719,21 @@ export const changeServerVersion = async (req: Request, res: Response) => {
     if (!isGeneric && (typeChanged || versionChanged)) {
       const jarPath = path.join(serverDir, server.serverJar || "server.jar");
       try {
+        const { panelEvents } = await import("../events.js");
+        panelEvents.emit("log", id, `\r\n[JTG System] Installing server software: ${server.type} (${server.version})...\r\n`);
         await downloadJar(server.type, server.version, jarPath);
-      } catch (dlErr) {
+        await fs.chmod(jarPath, 0o777).catch(() => {});
+        
+        const eulaPath = path.join(serverDir, "eula.txt");
+        if (!fs.existsSync(eulaPath)) {
+          await fs.writeFile(eulaPath, "eula=true\n");
+        }
+        await fs.chmod(eulaPath, 0o777).catch(() => {});
+        panelEvents.emit("log", id, `[JTG System] Successfully installed ${server.type} (${server.version}) core JAR!\r\n`);
+      } catch (dlErr: any) {
         console.warn("[changeServerVersion] Failed to download new jar:", dlErr);
+        const { panelEvents } = await import("../events.js");
+        panelEvents.emit("log", id, `[JTG System] Warning: Could not automatically download JAR (${dlErr?.message || dlErr}). You can click 'Reinstall' to try again.\r\n`);
       }
     }
 
@@ -734,7 +828,7 @@ export const uploadChunk = async (req: Request, res: Response) => {
   }
 };
 
-export const redownloadJar = async (req: Request, res: Response) => {
+export const reinstallServer = async (req: Request, res: Response) => {
   const { id } = req.params;
   const servers = (await readJSON("servers.json")) || [];
   const server = servers.find((s: any) => s.id === id);
@@ -743,17 +837,26 @@ export const redownloadJar = async (req: Request, res: Response) => {
   const targetType = (server.type || "PAPER").toUpperCase();
   const isGeneric = ["NODEJS", "NODE", "PYTHON", "PYTHON3"].includes(targetType);
   if (isGeneric) {
-    return res.status(400).json({ error: "Reinstall JAR is only applicable for Minecraft and Proxy servers" });
+    return res.status(400).json({ error: "Reinstall is only applicable for Minecraft and Proxy servers" });
   }
 
   const serverDir = path.join(process.cwd(), ".data", "servers", id);
   await fs.ensureDir(serverDir);
   await fs.chmod(serverDir, 0o777).catch(() => {});
-  const jarPath = path.join(serverDir, "server.jar");
+  const jarPath = path.join(serverDir, server.serverJar || "server.jar");
 
   try {
     const { panelEvents } = await import("../events.js");
-    panelEvents.emit("log", id, `[JTG System] Downloading ${server.type} (${server.version || "latest"}) server JAR...\r\n`);
+    panelEvents.emit("log", id, `\r\n[JTG System] Starting server reinstallation: ${server.type} (${server.version || "latest"})...\r\n`);
+    
+    // Clean up temporary / partial files if any
+    const files = await fs.readdir(serverDir).catch(() => []);
+    for (const f of files) {
+      if (f.includes(".tmp.") || f.endsWith(".part")) {
+        await fs.remove(path.join(serverDir, f)).catch(() => {});
+      }
+    }
+
     await downloadJar(server.type, server.version || "latest", jarPath);
     await fs.chmod(jarPath, 0o777).catch(() => {});
     
@@ -779,16 +882,18 @@ export const redownloadJar = async (req: Request, res: Response) => {
           await writeJSON("servers.json", servers);
         }
       } catch (containerErr) {
-        console.warn("[redownloadJar] Container refresh notice:", containerErr);
+        console.warn("[reinstallServer] Container refresh notice:", containerErr);
       }
     }
 
-    panelEvents.emit("log", id, `[JTG System] Server JAR successfully installed and configured!\r\n`);
-    res.json({ success: true, message: "Server JAR downloaded and configured successfully" });
+    panelEvents.emit("log", id, `[JTG System] Server software reinstalled and ready!\r\n`);
+    res.json({ success: true, message: "Server software reinstalled and configured successfully" });
   } catch (err: any) {
-    res.status(500).json({ error: err.message || "Failed to download JAR" });
+    res.status(500).json({ error: err.message || "Failed to reinstall server software" });
   }
 };
+
+export const redownloadJar = reinstallServer;
 
 
 export const completeUpload = async (req: Request, res: Response) => {

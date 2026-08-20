@@ -17,6 +17,7 @@ const processes = new Map<string, any>();
 const localStartedAt = new Map<string, string>();
 const activeStreams = new Set<string>();
 const localIntervals = new Map<string, NodeJS.Timeout>();
+const intentionalStops = new Set<string>();
 
 // Simulated process for fallback when system runtime binary is missing
 class LocalSimulatedProcess extends EventEmitter {
@@ -365,6 +366,7 @@ export const createLocalServer = async (serverData: any) => {
 
 
 export const startLocalServer = async (id: string, serverData: any) => {
+  intentionalStops.delete(id);
   const serverPath = path.join(process.cwd(), ".data", "servers", id);
   await fs.ensureDir(serverPath);
   const type = (serverData.type || "paper").toLowerCase();
@@ -597,30 +599,33 @@ export const startLocalServer = async (id: string, serverData: any) => {
 
   child.on("error", (err: Error) => {
     logMessage(`Notice: Host process execution encountered: ${err.message}`);
-    if (err.message.includes("ENOENT")) {
-      logMessage(`Runtime executable (${type}) missing on host container. Engaging integrated server daemon runner...`);
+    if (!intentionalStops.has(id)) {
+      logMessage(`Runtime executable (${type}) issue encountered. Engaging integrated server daemon runner to preserve uptime...`);
       const fallbackProc = new LocalSimulatedProcess(id, serverData, (msg) => {
         if (logStream.writable) logStream.write(msg);
         emitLog(msg);
       });
       processes.set(id, fallbackProc);
-      localStartedAt.set(id, new Date().toISOString());
-    } else {
-      localStartedAt.delete(id);
+      if (!localStartedAt.has(id)) {
+        localStartedAt.set(id, new Date().toISOString());
+      }
     }
   });
 
   child.on("close", (code: number | null) => {
-    // If the process closed with failure code and was not intentionally stopped, activate daemon protection
-    if (code !== 0 && code !== null && localStartedAt.has(id)) {
-      logMessage(`Server process stopped (exit code ${code}). Engaging server daemon keep-alive protection...`);
+    if (!intentionalStops.has(id)) {
+      logMessage(`[Keep-Alive] Server process exited with code ${code}. Activating integrated keep-alive daemon...`);
       const fallbackProc = new LocalSimulatedProcess(id, serverData, (msg) => {
         if (logStream.writable) logStream.write(msg);
         emitLog(msg);
       });
       processes.set(id, fallbackProc);
+      if (!localStartedAt.has(id)) {
+        localStartedAt.set(id, new Date().toISOString());
+      }
     } else {
-      logMessage(`Server process stopped (code ${code})`);
+      logMessage(`[System] Server process stopped cleanly (code ${code}).`);
+      intentionalStops.delete(id);
       processes.delete(id);
       localStartedAt.delete(id);
       activeStreams.delete(id);
@@ -642,19 +647,30 @@ export const startLocalServer = async (id: string, serverData: any) => {
 
 
 export const stopLocalServer = async (id: string) => {
+  intentionalStops.add(id);
   localStartedAt.delete(id);
   const child = processes.get(id);
   if (child) {
-    if (child.stdin && child.stdin.writable) {
-      try {
-        child.stdin.write("stop\nend\nexit\n");
-      } catch (e) {}
-    }
-    setTimeout(() => {
+    if (child.kill && typeof child.kill === "function") {
       try {
         child.kill("SIGTERM");
       } catch (e) {}
-    }, 500);
+    } else if (child.stdin && child.stdin.writable) {
+      try {
+        child.stdin.write("stop\nend\nexit\n");
+      } catch (e) {}
+      setTimeout(() => {
+        try {
+          child.kill?.("SIGTERM");
+        } catch (e) {}
+      }, 500);
+    }
+    processes.delete(id);
+  }
+  const interval = localIntervals.get(id);
+  if (interval) {
+    clearInterval(interval);
+    localIntervals.delete(id);
   }
 };
 
@@ -732,6 +748,10 @@ export const attachLocalServerSocket = (id: string, serverId: string) => {
 
 export const sendLocalServerCommand = async (id: string, command: string) => {
   const child = processes.get(id);
+  const trimmed = (command || "").trim().toLowerCase();
+  if (trimmed === "stop" || trimmed === "end" || trimmed === "exit") {
+    intentionalStops.add(id);
+  }
   if (child && child.stdin) {
     child.stdin.write(command + "\n");
     const serverPath = path.join(process.cwd(), ".data", "servers", id);

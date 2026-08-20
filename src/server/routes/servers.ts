@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { importWorld, getWorldInfo, analyzeWorld, listWorlds, optimizeWorld, generateWorld, downloadWorld, setActiveWorld, deleteWorld } from "../controllers/world.js";
 import { requireAuth } from "../middleware/auth.js";
-import { getServers, createServer, checkPort, getServer, deleteServer, startServer, stopServer, restartServer, changeServerVersion, migrateServerRuntime, getFiles, uploadFile, uploadChunk, completeUpload, deleteFile, renameFile, saveFileContent, sendCommand, getServerStats, updateOwner, updateIpAlias, getBackups, createBackup, downloadBackup, deleteBackup, restoreBackup, unzipFile, zipFiles, installPlugin, installMod, installResourcePack, installDatapack, getInstalledAddons, deleteAddonFile, updateResources, updateSuspend , createFile, createDirectory, downloadFile, redownloadJar } from "../controllers/servers.js";
+import { getServers, createServer, checkPort, getServer, deleteServer, startServer, stopServer, restartServer, forceRestartServer, changeServerVersion, migrateServerRuntime, getFiles, uploadFile, uploadChunk, completeUpload, deleteFile, renameFile, saveFileContent, sendCommand, getServerStats, updateOwner, updateIpAlias, getBackups, createBackup, downloadBackup, deleteBackup, restoreBackup, unzipFile, zipFiles, installPlugin, installMod, installResourcePack, installDatapack, getInstalledAddons, deleteAddonFile, updateResources, updateSuspend , createFile, createDirectory, downloadFile, redownloadJar } from "../controllers/servers.js";
 import multer from "multer";
 
 const router = express.Router();
@@ -28,6 +28,7 @@ router.put("/:id/suspend", updateSuspend);
 router.post("/:id/start", startServer);
 router.post("/:id/stop", stopServer);
 router.post("/:id/restart", restartServer);
+router.post("/:id/force-restart", forceRestartServer);
 router.post("/:id/command", sendCommand);
 router.post("/:id/redownload-jar", redownloadJar);
 router.post("/:id/reinstall", redownloadJar);
