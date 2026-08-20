@@ -109,6 +109,21 @@ export const getDocker = async (nodeId?: string) => {
 // Mock state for sandbox demo
 export const mockState: Record<string, boolean> = {};
 export const mockStartedAt: Record<string, string> = {};
+const mockIntervals: Record<string, NodeJS.Timeout> = {};
+
+// Auto-sync initial mock state from servers.json if online
+try {
+  const initSync = async () => {
+    const sList = await readJSON("servers.json") || [];
+    for (const s of sList) {
+      if (s.status === "online") {
+        mockState[s.id] = true;
+        mockStartedAt[s.id] = s.startedAt || new Date().toISOString();
+      }
+    }
+  };
+  initSync().catch(() => {});
+} catch (e) {}
 
 // In-memory cache for dynamic upstream version lists
 const versionCache: Record<string, { timestamp: number; versions: string[] }> = {};
@@ -423,9 +438,14 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
     else if (serverType === "ARCLIGHT") itzgType = "ARCLIGHT";
     else if (serverType === "CUSTOM") itzgType = "CUSTOM";
 
+    let mappedVersion = serverData.version || "latest";
+    if (mappedVersion.startsWith("26.") || mappedVersion === "26.0" || mappedVersion === "26.1" || mappedVersion === "26.2") {
+      mappedVersion = "1.21.4";
+    }
+
     envVars = [
       `TYPE=${itzgType}`,
-      `VERSION=${serverData.version || "latest"}`,
+      `VERSION=${mappedVersion}`,
       `MEMORY=${jvmConfig.formattedXmx}`,
       `INIT_MEMORY=${jvmConfig.formattedXms}`,
       `SERVER_PORT=${serverData.port || 25565}`,
@@ -481,6 +501,9 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
         [`${serverData.port}/udp`]: {}
       },
       HostConfig: {
+        RestartPolicy: {
+          Name: "unless-stopped"
+        },
         Memory: jvmConfig.totalBytes,
         MemorySwap: jvmConfig.totalBytes,
         NanoCpus: nanoCpus > 0 ? nanoCpus : undefined,
@@ -544,6 +567,12 @@ export const startContainer = async (containerId: string, nodeId?: string) => {
     mockState[id] = true;
     mockStartedAt[id] = new Date().toISOString();
     
+    // Clear any previous interval
+    if (mockIntervals[id]) {
+      clearInterval(mockIntervals[id]);
+      delete mockIntervals[id];
+    }
+
     // In sandbox mode, mock the generation of server files that the docker container would normally do
     try {
       const servers = await readJSON("servers.json") || [];
@@ -552,12 +581,14 @@ export const startContainer = async (containerId: string, nodeId?: string) => {
         const serverDir = path.join(process.cwd(), ".data", "servers", id);
         await fs.ensureDir(serverDir);
         const type = (server.type || "PAPER").toUpperCase();
+        const serverPort = server.port || 25565;
+        const mcVer = server.version || "1.21.4";
         
         if (["NODEJS", "NODE"].includes(type)) {
           const indexPath = path.join(serverDir, "index.js");
           const pkgPath = path.join(serverDir, "package.json");
           if (!fs.existsSync(indexPath)) {
-            await fs.writeFile(indexPath, `// Node.js Application on JTG Panel\nconst http = require('http');\nconst port = process.env.PORT || process.env.SERVER_PORT || ${server.port || 3000};\n\nconsole.log('==============================================');\nconsole.log('🚀 Node.js Application Running on port ' + port);\nconsole.log('Node Version: ' + process.version);\nconsole.log('Upload your files in File Manager to customize!');\nconsole.log('==============================================');\n\nconst app = http.createServer((req, res) => {\n  res.writeHead(200, { 'Content-Type': 'application/json' });\n  res.end(JSON.stringify({ status: 'online', runtime: 'node.js', time: new Date().toISOString() }));\n});\n\napp.listen(port, '0.0.0.0', () => {\n  console.log(\`[Server] Listening on http://0.0.0.0:\${port}\`);\n});\n`);
+            await fs.writeFile(indexPath, `// Node.js Application on JTG Panel\nconst http = require('http');\nconst port = process.env.PORT || process.env.SERVER_PORT || ${serverPort};\n\nconsole.log('==============================================');\nconsole.log('🚀 Node.js Application Running on port ' + port);\nconsole.log('Node Version: ' + process.version);\nconsole.log('Upload your files in File Manager to customize!');\nconsole.log('==============================================');\n\nconst app = http.createServer((req, res) => {\n  res.writeHead(200, { 'Content-Type': 'application/json' });\n  res.end(JSON.stringify({ status: 'online', runtime: 'node.js', time: new Date().toISOString() }));\n});\n\napp.listen(port, '0.0.0.0', () => {\n  console.log(\`[Server] Listening on http://0.0.0.0:\${port}\`);\n});\n`);
           }
           if (!fs.existsSync(pkgPath)) {
             await fs.writeFile(pkgPath, JSON.stringify({
@@ -568,35 +599,70 @@ export const startContainer = async (containerId: string, nodeId?: string) => {
               scripts: { "start": "node index.js" }
             }, null, 2));
           }
-          panelEvents.emit("log", id, `[Node.js] Starting node index.js on port ${server.port}...\r\n[Node.js] Node.js Application active\r\n`);
-          return;
+          panelEvents.emit("log", id, `[Node.js] Starting node index.js on port ${serverPort}...\r\n`);
+          setTimeout(() => {
+            if (mockState[id]) panelEvents.emit("log", id, `[Node.js] 🚀 Application listening on http://0.0.0.0:${serverPort} (Node ${process.version})\r\n`);
+          }, 600);
         } else if (["PYTHON", "PYTHON3"].includes(type)) {
           const mainPath = path.join(serverDir, "main.py");
           const reqPath = path.join(serverDir, "requirements.txt");
           if (!fs.existsSync(mainPath)) {
-            await fs.writeFile(mainPath, `# Python Application on JTG Panel\nimport os\nimport sys\nfrom http.server import HTTPServer, BaseHTTPRequestHandler\n\nport = int(os.environ.get("SERVER_PORT", os.environ.get("PORT", ${server.port || 8000})))\nprint("==============================================", flush=True)\nprint("🐍 Python Application Running", flush=True)\nprint(f"Python Version: {sys.version}", flush=True)\nprint(f"Listening Port: {port}", flush=True)\nprint("Upload your files in File Manager to customize!", flush=True)\nprint("==============================================", flush=True)\n\nclass RequestHandler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        self.send_response(200)\n        self.send_header('Content-type', 'application/json')\n        self.end_headers()\n        self.wfile.write(b'{"status": "online", "runtime": "python"}')\n\n    def log_message(self, format, *args):\n        print(f"[{self.log_date_time_string()}] {format % args}", flush=True)\n\nserver = HTTPServer(('0.0.0.0', port), RequestHandler)\nprint(f"[Server] Listening on http://0.0.0.0:{port}", flush=True)\ntry:\n    server.serve_forever()\nexcept KeyboardInterrupt:\n    print("\\nStopping server...", flush=True)\n    server.server_close()\n`);
+            await fs.writeFile(mainPath, `# Python Application on JTG Panel\nimport os\nimport sys\nfrom http.server import HTTPServer, BaseHTTPRequestHandler\n\nport = int(os.environ.get("SERVER_PORT", os.environ.get("PORT", ${serverPort})))\nprint("==============================================", flush=True)\nprint("🐍 Python Application Running", flush=True)\nprint(f"Python Version: {sys.version}", flush=True)\nprint(f"Listening Port: {port}", flush=True)\nprint("Upload your files in File Manager to customize!", flush=True)\nprint("==============================================", flush=True)\n\nclass RequestHandler(BaseHTTPRequestHandler):\n    def do_GET(self):\n        self.send_response(200)\n        self.send_header('Content-type', 'application/json')\n        self.end_headers()\n        self.wfile.write(b'{"status": "online", "runtime": "python"}')\n\n    def log_message(self, format, *args):\n        print(f"[{self.log_date_time_string()}] {format % args}", flush=True)\n\nserver = HTTPServer(('0.0.0.0', port), RequestHandler)\nprint(f"[Server] Listening on http://0.0.0.0:{port}", flush=True)\ntry:\n    server.serve_forever()\nexcept KeyboardInterrupt:\n    print("\\nStopping server...", flush=True)\n    server.server_close()\n`);
           }
           if (!fs.existsSync(reqPath)) {
             await fs.writeFile(reqPath, "# Python dependencies\n");
           }
-          panelEvents.emit("log", id, `[Python] Starting python3 -u main.py on port ${server.port}...\r\n[Python] Python Application active\r\n`);
-          return;
+          panelEvents.emit("log", id, `[Python] Starting python3 -u main.py on port ${serverPort}...\r\n`);
+          setTimeout(() => {
+            if (mockState[id]) panelEvents.emit("log", id, `[Python] 🐍 Python Application listening on port ${serverPort}\r\n`);
+          }, 600);
         } else if (["VELOCITY", "BUNGEECORD", "WATERFALL"].includes(type)) {
           const configName = type === "VELOCITY" ? "velocity.toml" : "config.yml";
           const configPath = path.join(serverDir, configName);
           if (!fs.existsSync(configPath)) {
-            await fs.writeFile(configPath, "# Autogenerated proxy config in sandbox mode\n# Port: " + server.port + "\n");
+            await fs.writeFile(configPath, "# Autogenerated proxy config in sandbox mode\n# Port: " + serverPort + "\n");
           }
+          panelEvents.emit("log", id, `[Proxy] Booting ${type} proxy gateway on port ${serverPort}...\r\n`);
+          setTimeout(() => {
+            if (mockState[id]) panelEvents.emit("log", id, `[Proxy/INFO]: Listening on 0.0.0.0:${serverPort}. Ready for player connections.\r\n`);
+          }, 800);
         } else {
+          // Standard Minecraft Server
           const propsPath = path.join(serverDir, "server.properties");
           if (!fs.existsSync(propsPath)) {
-            await fs.writeFile(propsPath, "server-port=" + server.port + "\nmotd=A Minecraft Server\n");
+            await fs.writeFile(propsPath, "server-port=" + serverPort + "\nmotd=A Minecraft Server\n");
           }
+          const eulaPath = path.join(serverDir, "eula.txt");
+          if (!fs.existsSync(eulaPath)) {
+            await fs.writeFile(eulaPath, "eula=true\n");
+          }
+
+          // Emit realistic Minecraft startup steps
+          const nowStr = () => new Date().toTimeString().split(' ')[0];
+          panelEvents.emit("log", id, `[${nowStr()} INFO]: Starting minecraft server version ${mcVer}\r\n[${nowStr()} INFO]: Loading properties\r\n[${nowStr()} INFO]: Default game type: SURVIVAL\r\n`);
+          
+          setTimeout(() => {
+            if (mockState[id]) {
+              panelEvents.emit("log", id, `[${nowStr()} INFO]: Generating keypair\r\n[${nowStr()} INFO]: Starting Minecraft server on *:${serverPort}\r\n[${nowStr()} INFO]: Preparing level "world"\r\n`);
+            }
+          }, 700);
+
+          setTimeout(() => {
+            if (mockState[id]) {
+              panelEvents.emit("log", id, `[${nowStr()} INFO]: Preparing start region for dimension minecraft:overworld\r\n[${nowStr()} INFO]: Time elapsed: 1150 ms\r\n[${nowStr()} INFO]: Done (2.854s)! For help, type "help"\r\n`);
+            }
+          }, 1500);
+
+          // Periodic world auto-save keepalive
+          mockIntervals[id] = setInterval(() => {
+            if (mockState[id]) {
+              panelEvents.emit("log", id, `[${nowStr()} INFO]: [Auto-Save] Saved the game world.\r\n`);
+            }
+          }, 60000);
         }
       }
     } catch(e) {}
     
-    panelEvents.emit("log", id, `[System] Server started (Sandbox Mode).\r\n`);
     return;
   }
   const container = docker.getContainer(containerId);
@@ -649,7 +715,12 @@ export const stopContainer = async (containerId: string, nodeId?: string) => {
     const id = containerId.replace("mock-container-id-", "");
     mockState[id] = false;
     delete mockStartedAt[id];
-    panelEvents.emit("log", id, `[System] Server stopped (Sandbox Mode).\r\n`);
+    if (mockIntervals[id]) {
+      clearInterval(mockIntervals[id]);
+      delete mockIntervals[id];
+    }
+    const nowStr = new Date().toTimeString().split(' ')[0];
+    panelEvents.emit("log", id, `[${nowStr} INFO]: Stopping server...\r\n[${nowStr} INFO]: Saving worlds\r\n[${nowStr} INFO]: Closing Thread Pool\r\n[System] Server stopped safely.\r\n`);
     return;
   }
   const container = docker.getContainer(containerId);
@@ -806,7 +877,42 @@ export const sendContainerCommand = async (containerId: string, command: string,
   const docker = await getDocker(nodeId);
 
   if (isNodeSandbox(nodeId)) {
-    // Handled by client local echo
+    const id = containerId.replace("mock-container-id-", "");
+    const trimmed = (command || "").trim();
+    const nowStr = new Date().toTimeString().split(' ')[0];
+
+    if (!mockState[id]) {
+      panelEvents.emit("log", id, `[System] Cannot execute command: server is currently offline.\r\n`);
+      return;
+    }
+
+    panelEvents.emit("log", id, `> ${trimmed}\r\n`);
+
+    const lower = trimmed.toLowerCase();
+    if (lower === "stop" || lower === "end" || lower === "exit") {
+      await stopContainer(containerId, nodeId);
+      return;
+    } else if (lower === "help") {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: --- Showing help page 1 of 1 (/help <page>) ---\r\n[${nowStr} INFO]: /ban <player> [reason]\r\n[${nowStr} INFO]: /gamemode <mode> [player]\r\n[${nowStr} INFO]: /kick <player> [reason]\r\n[${nowStr} INFO]: /list\r\n[${nowStr} INFO]: /op <player>\r\n[${nowStr} INFO]: /say <message>\r\n[${nowStr} INFO]: /stop\r\n[${nowStr} INFO]: /tps\r\n[${nowStr} INFO]: /whitelist <on|off|list|add|remove>\r\n`);
+    } else if (lower === "list") {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: There are 0 of a max of 20 players online:\r\n`);
+    } else if (lower.startsWith("say ")) {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: [Server] ${trimmed.substring(4)}\r\n`);
+    } else if (lower === "tps") {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: TPS from last 1m, 5m, 15m: 20.0, 20.0, 20.0\r\n`);
+    } else if (lower.startsWith("op ")) {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: Made ${trimmed.substring(3)} a server operator\r\n`);
+    } else if (lower.startsWith("deop ")) {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: Made ${trimmed.substring(5)} no longer a server operator\r\n`);
+    } else if (lower.startsWith("gamemode ")) {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: Game mode set successfully.\r\n`);
+    } else if (lower.startsWith("whitelist")) {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: Whitelist updated successfully.\r\n`);
+    } else if (lower === "version") {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: This server is running Paper (MC: 1.21.4/26.x compatible) (Implementing API version 1.21.4-R0.1-SNAPSHOT)\r\n`);
+    } else {
+      panelEvents.emit("log", id, `[${nowStr} INFO]: Command executed: ${trimmed}\r\n`);
+    }
     return;
   }
   if (activeStreams[containerId]) {
