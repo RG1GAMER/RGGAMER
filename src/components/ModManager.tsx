@@ -61,15 +61,22 @@ interface ModManagerProps {
 
 const MOD_PRESETS = [
   { name: "JEI (Just Enough Items)", query: "jei" },
-  { name: "Sodium (High FPS)", query: "sodium" },
+  { name: "Sodium (High FPS Engine)", query: "sodium" },
   { name: "Iris Shaders", query: "iris" },
   { name: "Lithium (Server Optimization)", query: "lithium" },
   { name: "FerriteCore (RAM Reducer)", query: "ferritecore" },
   { name: "Create (Engineering)", query: "create" },
+  { name: "Fabric API", query: "fabric-api" },
+  { name: "Spark (Profiler)", query: "spark" },
+  { name: "ModernFix (Fast Loading)", query: "modernfix" },
+  { name: "ImmediatelyFast", query: "immediatelyfast" },
   { name: "Waystones (Teleportation)", query: "waystones" },
   { name: "AppleSkin (HUD Food Info)", query: "appleskin" },
+  { name: "Simple Voice Chat", query: "simple-voice-chat" },
   { name: "Cloth Config", query: "cloth-config" },
   { name: "Xaero's Minimap", query: "xaeros-minimap" },
+  { name: "Indium", query: "indium" },
+  { name: "Chunky (Pre-generator)", query: "chunky" },
 ];
 
 const RESOURCEPACK_PRESETS = [
@@ -82,23 +89,35 @@ const RESOURCEPACK_PRESETS = [
   { name: "Better Leaves", query: "better leaves" },
   { name: "Fast Better Grass", query: "better grass" },
   { name: "Compliance 32x", query: "compliance" },
+  { name: "Visual Workbench", query: "visual workbench" },
+  { name: "3D Crops", query: "3d crops" },
+  { name: "Complementary Shaders", query: "complementary" },
 ];
 
 const DATAPACK_PRESETS = [
   { name: "Terralith (World Overhaul)", query: "terralith" },
   { name: "Incendium (Nether Expansion)", query: "incendium" },
   { name: "Nullscape (The End Overhaul)", query: "nullscape" },
+  { name: "BlazeandCave's Advancements", query: "advancements" },
   { name: "Armor Statues", query: "armor statues" },
   { name: "Timber (Tree Capitator)", query: "timber" },
   { name: "Player Head Drops", query: "player head drops" },
   { name: "Coordinates HUD", query: "coordinates hud" },
   { name: "Graves / Keep Inventory", query: "graves" },
+  { name: "Multiplayer Sleep", query: "multiplayer sleep" },
+  { name: "Fast Leaf Decay", query: "fast leaf decay" },
+  { name: "Vanilla Tweaks", query: "vanilla tweaks" },
 ];
 
 const GAME_VERSIONS = [
   "All",
+  "26.2",
+  "26.1.2",
+  "26.1",
+  "26.0",
   "1.21.4",
   "1.21.3",
+  "1.21.2",
   "1.21.1",
   "1.21",
   "1.20.6",
@@ -106,10 +125,19 @@ const GAME_VERSIONS = [
   "1.20.2",
   "1.20.1",
   "1.19.4",
+  "1.19.3",
   "1.19.2",
+  "1.19.1",
+  "1.19",
   "1.18.2",
+  "1.18.1",
+  "1.17.1",
   "1.16.5",
+  "1.15.2",
+  "1.14.4",
   "1.12.2",
+  "1.8.9",
+  "1.7.10",
 ];
 
 const MOD_LOADERS = ["All", "fabric", "forge", "neoforge", "quilt"];
@@ -120,8 +148,19 @@ export default function ModManager({ serverId, server, initialTab = "mods" }: Mo
   const [loading, setLoading] = useState(false);
   const [isInstalling, setIsInstalling] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [selectedLoader, setSelectedLoader] = useState<string>("All");
-  const [selectedVersion, setSelectedVersion] = useState<string>("All");
+  const [selectedLoader, setSelectedLoader] = useState<string>(() => {
+    const t = (server?.type || "").toLowerCase();
+    if (["fabric", "forge", "neoforge", "quilt"].includes(t)) {
+      return t;
+    }
+    return "All";
+  });
+  const [selectedVersion, setSelectedVersion] = useState<string>(() => {
+    if (server?.version && GAME_VERSIONS.includes(server.version)) {
+      return server.version;
+    }
+    return "All";
+  });
   const [selectedCategory, setSelectedCategory] = useState<string>("All");
   const [sortBy, setSortBy] = useState<"downloads" | "follows" | "updated" | "relevance">("downloads");
   const [statusMsg, setStatusMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
@@ -290,6 +329,7 @@ export default function ModManager({ serverId, server, initialTab = "mods" }: Mo
         const res = await axios.post(`/api/servers/${serverId}/mods/install`, {
           pluginId: hit.id,
           pluginName: hit.name,
+          versionId: versionId,
         });
         setStatusMsg({
           text: res.data.message || `${hit.name} installed successfully into /mods!`,

@@ -1344,7 +1344,6 @@ export const installPlugin = async (req: Request, res: Response) => {
 };
 
 export const installMod = async (req: Request, res: Response) => {
-
   const { id } = req.params;
   const serversJSON = await readJSON("servers.json");
   const server = serversJSON?.find((s: any) => s.id === id);
@@ -1354,7 +1353,7 @@ export const installMod = async (req: Request, res: Response) => {
   if (!modCompatibleTypes.includes((server.type || "").toUpperCase())) {
      return res.status(400).json({ error: `Cannot install Fabric/Forge mods on a ${server.type} server. This software does not support Fabric/Forge mods.` });
   }
-  const { pluginId, pluginName } = req.body; 
+  const { pluginId, pluginName, versionId } = req.body; 
 
   if (!pluginId || !pluginName) {
     return res.status(400).json({ error: "Missing pluginId or pluginName" });
@@ -1366,15 +1365,46 @@ export const installMod = async (req: Request, res: Response) => {
     await fs.ensureDir(modsDir);
     
     let downloadUrl = null;
-    let filename = `${pluginName.replace(/[^a-zA-Z0-9]/g, '_')}.jar`;
+    let filename = `${pluginName.replace(/[^a-zA-Z0-9_-]/g, '_')}.jar`;
     const axios = (await import("axios")).default;
 
-    const verRes = await axios.get(`https://api.modrinth.com/v2/project/${pluginId}/version`);
-    if (verRes.data && verRes.data.length > 0) {
-      const file = verRes.data[0].files.find((f: any) => f.primary) || verRes.data[0].files[0];
+    let targetVersionObj: any = null;
+
+    if (versionId) {
+      const vRes = await axios.get(`https://api.modrinth.com/v2/version/${versionId}`);
+      targetVersionObj = vRes.data;
+    } else {
+      const verRes = await axios.get(`https://api.modrinth.com/v2/project/${pluginId}/version`);
+      if (verRes.data && Array.isArray(verRes.data) && verRes.data.length > 0) {
+        const serverVer = (server.version || "").toLowerCase();
+        const serverLoader = (server.type || "").toLowerCase();
+
+        // 1. Try to find match for both game version and loader
+        targetVersionObj = verRes.data.find((v: any) => {
+          const matchVer = v.game_versions?.some((gv: string) => gv.toLowerCase() === serverVer || (serverVer.startsWith("26.") && (gv.startsWith("26.") || gv === "1.21.4")));
+          const matchLoader = v.loaders?.some((l: string) => l.toLowerCase() === serverLoader);
+          return matchVer && matchLoader;
+        });
+
+        // 2. Try match for loader only
+        if (!targetVersionObj) {
+          targetVersionObj = verRes.data.find((v: any) => 
+            v.loaders?.some((l: string) => l.toLowerCase() === serverLoader)
+          );
+        }
+
+        // 3. Fallback to first available version
+        if (!targetVersionObj) {
+          targetVersionObj = verRes.data[0];
+        }
+      }
+    }
+
+    if (targetVersionObj && targetVersionObj.files && targetVersionObj.files.length > 0) {
+      const file = targetVersionObj.files.find((f: any) => f.primary) || targetVersionObj.files[0];
       if (file) {
-          downloadUrl = file.url;
-          filename = file.filename || filename;
+        downloadUrl = file.url;
+        filename = file.filename || filename;
       }
     }
 
@@ -1432,7 +1462,17 @@ export const installResourcePack = async (req: Request, res: Response) => {
       : `https://api.modrinth.com/v2/project/${projectId}/version`;
 
     const verRes = await axios.get(url);
-    const versionData = Array.isArray(verRes.data) ? verRes.data[0] : verRes.data;
+    let versionData: any = null;
+    if (versionId) {
+      versionData = verRes.data;
+    } else if (Array.isArray(verRes.data) && verRes.data.length > 0) {
+      const serverVer = (server.version || "").toLowerCase();
+      versionData = verRes.data.find((v: any) => 
+        v.game_versions?.some((gv: string) => gv.toLowerCase() === serverVer || (serverVer.startsWith("26.") && (gv.startsWith("26.") || gv === "1.21.4")))
+      ) || verRes.data[0];
+    } else {
+      versionData = verRes.data;
+    }
 
     if (versionData && versionData.files && versionData.files.length > 0) {
       const file = versionData.files.find((f: any) => f.primary) || versionData.files[0];
@@ -1516,7 +1556,17 @@ export const installDatapack = async (req: Request, res: Response) => {
       : `https://api.modrinth.com/v2/project/${projectId}/version`;
 
     const verRes = await axios.get(url);
-    const versionData = Array.isArray(verRes.data) ? verRes.data[0] : verRes.data;
+    let versionData: any = null;
+    if (versionId) {
+      versionData = verRes.data;
+    } else if (Array.isArray(verRes.data) && verRes.data.length > 0) {
+      const serverVer = (server.version || "").toLowerCase();
+      versionData = verRes.data.find((v: any) => 
+        v.game_versions?.some((gv: string) => gv.toLowerCase() === serverVer || (serverVer.startsWith("26.") && (gv.startsWith("26.") || gv === "1.21.4")))
+      ) || verRes.data[0];
+    } else {
+      versionData = verRes.data;
+    }
 
     if (versionData && versionData.files && versionData.files.length > 0) {
       const file = versionData.files.find((f: any) => f.primary) || versionData.files[0];
