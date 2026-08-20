@@ -2,6 +2,7 @@ import axios from "axios";
 import { GameServerRuntimeProvider } from "./runtimeProvider.js";
 import { readJSON, writeJSON } from "./db.js";
 import { panelEvents } from "../events.js";
+import { calculateJvmMemory } from "../utils/jvmMemory.js";
 import fs from "fs-extra";
 import path from "path";
 
@@ -48,14 +49,29 @@ export class WingsRuntimeProvider implements GameServerRuntimeProvider {
     if (!node) throw new Error("Node not found");
     const client = getWingsClient(node);
 
-    let javaVersion = "java_17";
-    if (server.version && server.version.startsWith("1.20.") && parseInt(server.version.split(".")[2] || "0") >= 5) {
-       javaVersion = "java_21";
-    } else if (server.version && server.version.startsWith("1.21")) {
-       javaVersion = "java_21";
+    let javaVersion = "java_25";
+    const verStr = String(server.version || "").toLowerCase();
+    if (server.javaVersion && String(server.javaVersion).trim() !== "") {
+      const rawJv = String(server.javaVersion).trim().toLowerCase().replace(/^java-?/, '');
+      javaVersion = `java_${rawJv}`;
+    } else if (verStr.startsWith("26.") || verStr.startsWith("27.") || verStr === "26.2" || verStr === "26.1.2" || verStr === "26.1.1" || verStr === "26.1" || verStr === "26.0" || verStr === "26" || parseFloat(verStr) >= 26) {
+      javaVersion = "java_25";
+    } else if (verStr.startsWith("1.21") || (verStr.startsWith("1.20.") && parseInt(verStr.split(".")[2] || "0") >= 5)) {
+      javaVersion = "java_21";
+    } else if (verStr.startsWith("1.18") || verStr.startsWith("1.19") || verStr.startsWith("1.20")) {
+      javaVersion = "java_17";
+    } else if (verStr.startsWith("1.17")) {
+      javaVersion = "java_16";
+    } else if (verStr.startsWith("1.16")) {
+      javaVersion = "java_11";
+    } else if (verStr.startsWith("1.7") || verStr.startsWith("1.8") || verStr.startsWith("1.9") || verStr.startsWith("1.12") || verStr.startsWith("1.15")) {
+      javaVersion = "java_8";
+    } else {
+      javaVersion = "java_25";
     }
 
     const image = server.dockerImage || `ghcr.io/pterodactyl/yolks:${javaVersion}`;
+    const jvmConfig = calculateJvmMemory(server.ram || (server.memory ? server.memory / 1024 : 2));
 
     const payload = {
       uuid: server.id,
@@ -65,16 +81,17 @@ export class WingsRuntimeProvider implements GameServerRuntimeProvider {
       },
       suspended: false,
       environment: {
-        SERVER_JARFILE: server.jarFile || "server.jar"
+        SERVER_JARFILE: server.jarFile || server.serverJar || "server.jar",
+        SERVER_MEMORY: String(jvmConfig.heapMaxMb)
       },
-      invocation: server.startupCommand || "java -Xms128M -Xmx{{SERVER_MEMORY}}M -jar {{SERVER_JARFILE}}",
+      invocation: server.startupCommand || `java -Xms${jvmConfig.formattedXms} -Xmx${jvmConfig.formattedXmx} -DPaper.IgnoreWorldDataVersion=true -jar {{SERVER_JARFILE}}`,
       skip_egg_scripts: true,
       build: {
-        memory: server.memory || 1024,
+        memory: jvmConfig.totalMb,
         swap: 0,
         io: 500,
         cpu: server.cpu || 100,
-        disk: server.disk || 10240,
+        disk: (server.disk || 10) * 1024,
         threads: null
       },
       container: {

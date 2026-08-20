@@ -1,0 +1,44 @@
+# ==============================================================================
+# RGGAMER Panel - Docker Compose Configuration
+# Java 25 Runtime with Docker-in-Docker / Host Socket for Game Server Management
+# ==============================================================================
+
+version: '3.8'
+
+services:
+  rggamer-panel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rggamer-panel
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+      - "25565-25585:25565-25585"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - DEFAULT_RUNTIME=local
+      - JWT_SECRET=rggamer-panel-production-secret-key-change-me
+      - ALLOW_REGISTRATION=true
+    volumes:
+      # Persistent application data, server configs, worlds, and backups
+      - panel_data:/app/.data
+      - panel_backups:/app/backups
+      - panel_logs:/app/.logs
+      # Mount host Docker daemon socket if using Docker server runtime provider
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  panel_data:
+    driver: local
+  panel_backups:
+    driver: local
+  panel_logs:
+    driver: local

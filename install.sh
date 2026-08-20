@@ -248,24 +248,32 @@ prompt_java_install() {
     
     if command -v java &> /dev/null; then
         log_success "Java is already installed ($(java -version 2>&1 | head -n 1))."
+    elif [ -f ".data/bin/jre-25/bin/java" ]; then
+        log_success "Portable OpenJDK 25 detected in .data/bin/jre-25."
     elif [ -f ".data/bin/jre-21/bin/java" ]; then
         log_success "Portable OpenJDK 21 LTS detected in .data/bin/jre-21."
     else
         local install_java
-        read -r -p "  Install OpenJDK 21 Java Runtime on host? [y/N, default: y]: " install_java
+        read -r -p "  Install Java Runtime (Java 25/21 for MC 26.x+) on host? [y/N, default: y]: " install_java
         install_java=$(echo "$install_java" | tr -d ' ')
         if [[ "$install_java" =~ ^[Nn]$ ]]; then
             log_info "Skipping host Java installation. (The panel auto-provisions portable JRE on demand)."
         else
-            log_info "Installing OpenJDK 21..."
+            log_info "Installing OpenJDK Java Runtime (Java 25 / 21)..."
             if command -v apt-get &> /dev/null; then
                 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
                     -o Dpkg::Options::="--force-confdef" \
                     -o Dpkg::Options::="--force-confold" \
                     -o Dpkg::Options::="--force-overwrite" \
-                    openjdk-21-jre-headless 2>/dev/null || sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends openjdk-17-jre-headless 2>/dev/null || log_warning "System Java package unavailable. Portable JRE will be used."
+                    openjdk-25-jre-headless 2>/dev/null || \
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+                    -o Dpkg::Options::="--force-confdef" \
+                    -o Dpkg::Options::="--force-confold" \
+                    -o Dpkg::Options::="--force-overwrite" \
+                    openjdk-21-jre-headless 2>/dev/null || \
+                sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends openjdk-17-jre-headless 2>/dev/null || log_warning "System Java package unavailable. Portable JRE will be auto-provisioned."
             elif command -v yum &> /dev/null; then
-                sudo yum install -y -q java-21-openjdk-headless || sudo yum install -y -q java-17-openjdk-headless || true
+                sudo yum install -y -q java-25-openjdk-headless || sudo yum install -y -q java-21-openjdk-headless || sudo yum install -y -q java-17-openjdk-headless || true
             fi
             log_success "Java runtime verified."
         fi

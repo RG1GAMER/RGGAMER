@@ -19,7 +19,7 @@ import SubUsersManager from "../components/SubUsersManager";
 import ServerSFTP from "../components/ServerSFTP";
 import PlayitTunnel from "./PlayitTunnel";
 import WorldManager from "../components/WorldManager";
-import { Map } from "lucide-react";
+import { Map, Palette } from "lucide-react";
 import { Puzzle, Box, Network } from "lucide-react";
 import { Settings, Globe } from "lucide-react";
 import { useSettings } from "../context/SettingsContext";
@@ -143,6 +143,10 @@ export default function ServerView() {
 
     if (["FORGE", "FABRIC", "NEOFORGE", "QUILT"].includes(serverTypeUpper)) {
       tabs.push({ name: "Mods", path: `/servers/${id}/mods`, exactPath: "mods", icon: <Box size={18} /> });
+    }
+
+    if (!isProxy) {
+      tabs.push({ name: "Resource Packs", path: `/servers/${id}/resourcepacks`, exactPath: "resourcepacks", icon: <Palette size={18} /> });
     }
 
     tabs.push(
@@ -380,7 +384,8 @@ export default function ServerView() {
              <Route path="/settings" element={<ServerSettings serverId={id!} server={server} />} />
              <Route path="/backup" element={<ServerBackups serverId={id!} />} />
              <Route path="/plugins" element={<PluginManager serverId={id!} />} />
-             <Route path="/mods" element={<ModManager serverId={id!} />} />
+             <Route path="/mods" element={<ModManager serverId={id!} server={server} initialTab="mods" />} />
+             <Route path="/resourcepacks" element={<ModManager serverId={id!} server={server} initialTab="resourcepacks" />} />
              {enablePlayit && <Route path="/playit" element={<PlayitTunnel serverId={id!} />} />}
            </Routes>
         </div>

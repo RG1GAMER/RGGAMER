@@ -37,10 +37,16 @@ fi
 # Install Node.js if not present
 if ! command -v node &> /dev/null; then
     echo "[+] Installing Node.js..."
-    curl -fsSL https://deb.nodesource.com/setup_18.x | bash -
+    curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
     apt-get install -y nodejs
 else
     echo "[+] Node.js is already installed."
+fi
+
+# Check / Install Java 25 Runtime (for Paper 26.2+ / Minecraft 26.x)
+if ! command -v java &> /dev/null; then
+    echo "[+] Installing OpenJDK Java Runtime (Java 25 / 21)..."
+    apt-get update -qq && (apt-get install -y -qq openjdk-25-jre-headless || apt-get install -y -qq openjdk-21-jre-headless || apt-get install -y -qq openjdk-17-jre-headless || true)
 fi
 
 # Install PM2 if not present

@@ -8,6 +8,7 @@ import pidusage from "pidusage";
 import { downloadJar } from "./jarDownloader.js";
 import { panelEvents } from "../events.js";
 import { getServerDiskUsageMB } from "./diskUsage.js";
+import { calculateJvmMemory, getStandardAikarFlags, interpolateStartupCommand } from "../utils/jvmMemory.js";
 
 const execAsync = promisify(exec);
 const processes = new Map<string, ChildProcess>();
@@ -33,7 +34,9 @@ export const resolveJavaBinary = async (serverData?: any, onLog?: (msg: string) 
       targetVer = "16";
     } else if (verStr.startsWith("1.18") || verStr.startsWith("1.19") || verStr.startsWith("1.20.1") || verStr.startsWith("1.20.2") || verStr.startsWith("1.20.3") || verStr.startsWith("1.20.4")) {
       targetVer = "17";
-    } else if (verStr.startsWith("1.20.5") || verStr.startsWith("1.20.6") || verStr.startsWith("1.21") || verStr.startsWith("26.")) {
+    } else if (verStr.startsWith("26.") || verStr.startsWith("27.") || verStr === "26.2" || verStr === "26.1.2" || verStr === "26.1.1" || verStr === "26.1" || verStr === "26.0" || verStr === "26" || parseFloat(verStr) >= 26) {
+      targetVer = "25";
+    } else if (verStr.startsWith("1.20.5") || verStr.startsWith("1.20.6") || verStr.startsWith("1.21")) {
       targetVer = "21";
     } else {
       targetVer = "21";
@@ -54,6 +57,7 @@ export const resolveJavaBinary = async (serverData?: any, onLog?: (msg: string) 
     `/usr/lib/jvm/java-${targetVer}/bin/java`,
     `/usr/lib/jvm/temurin-${targetVer}-jdk-amd64/bin/java`,
     `/opt/java/openjdk-${targetVer}/bin/java`,
+    `/usr/lib/jvm/java-25-openjdk-amd64/bin/java`,
     `/usr/lib/jvm/java-21-openjdk-amd64/bin/java`,
     `/usr/lib/jvm/java-17-openjdk-amd64/bin/java`,
     `/usr/lib/jvm/default-java/bin/java`,
@@ -257,19 +261,23 @@ export const startLocalServer = async (id: string, serverData: any) => {
 
   if (type === "nodejs" || type === "node") {
     const nodeBin = await resolveNodeBinary();
+    const jvmConfig = calculateJvmMemory(serverData.ram || 2);
 
     if (serverData.startupCommand && serverData.startupCommand.trim()) {
-      const parts = serverData.startupCommand.trim().split(/\s+/);
+      const resolvedCmd = interpolateStartupCommand(serverData.startupCommand.trim(), serverData, jvmConfig);
+      const parts = resolvedCmd.trim().split(/\s+/);
       const bin = parts[0];
       const args = parts.slice(1);
-      logMessage(`Executing custom startup command: ${serverData.startupCommand.trim()}`);
+      logMessage(`Executing custom startup command: ${resolvedCmd}`);
       child = spawn(bin, args, {
         cwd: serverPath,
         env: {
           ...process.env,
           PORT: String(serverData.port || 3000),
           SERVER_PORT: String(serverData.port || 3000),
-          NODE_ENV: "production"
+          NODE_ENV: "production",
+          MAX_RAM_MB: String(jvmConfig.totalMb),
+          NODE_OPTIONS: `--max-old-space-size=${jvmConfig.heapMaxMb}`
         },
         stdio: ["pipe", "pipe", "pipe"]
       });
@@ -317,33 +325,37 @@ export const startLocalServer = async (id: string, serverData: any) => {
         entry = "index.js";
       }
 
-      logMessage(`Starting Node.js application (${entry}) on port ${serverData.port || 3000}...`);
-      child = spawn(nodeBin, [entry], {
+      logMessage(`Starting Node.js application (${entry}) on port ${serverData.port || 3000}... (Heap Max: ${jvmConfig.heapMaxMb}MB)`);
+      child = spawn(nodeBin, [`--max-old-space-size=${jvmConfig.heapMaxMb}`, entry], {
         cwd: serverPath,
         env: {
           ...process.env,
           PORT: String(serverData.port || 3000),
           SERVER_PORT: String(serverData.port || 3000),
-          NODE_ENV: "production"
+          NODE_ENV: "production",
+          MAX_RAM_MB: String(jvmConfig.totalMb)
         },
         stdio: ["pipe", "pipe", "pipe"]
       });
     }
   } else if (type === "python" || type === "python3") {
     const pythonBin = await resolvePythonBinary();
+    const jvmConfig = calculateJvmMemory(serverData.ram || 2);
 
     if (serverData.startupCommand && serverData.startupCommand.trim()) {
-      const parts = serverData.startupCommand.trim().split(/\s+/);
+      const resolvedCmd = interpolateStartupCommand(serverData.startupCommand.trim(), serverData, jvmConfig);
+      const parts = resolvedCmd.trim().split(/\s+/);
       const bin = parts[0];
       const args = parts.slice(1);
-      logMessage(`Executing custom startup command: ${serverData.startupCommand.trim()}`);
+      logMessage(`Executing custom startup command: ${resolvedCmd}`);
       child = spawn(bin, args, {
         cwd: serverPath,
         env: {
           ...process.env,
           PORT: String(serverData.port || 8000),
           SERVER_PORT: String(serverData.port || 8000),
-          PYTHONUNBUFFERED: "1"
+          PYTHONUNBUFFERED: "1",
+          MAX_RAM_MB: String(jvmConfig.totalMb)
         },
         stdio: ["pipe", "pipe", "pipe"]
       });
@@ -417,28 +429,32 @@ export const startLocalServer = async (id: string, serverData: any) => {
     const eulaPath = path.join(serverPath, "eula.txt");
     await fs.writeFile(eulaPath, "eula=true\n");
 
-    const memoryMb = Math.round((serverData.ram || 2) * 1024);
+    const jvmConfig = calculateJvmMemory(serverData.ram || 2);
     const javaBin = await resolveJavaBinary(serverData, logMessage);
 
+    logMessage(`Dynamic JVM Memory: Max Heap (Xmx)=${jvmConfig.formattedXmx}, Init Heap (Xms)=${jvmConfig.formattedXms}, Off-heap Headroom=${jvmConfig.offHeapMb}MB (Total Allocated RAM=${jvmConfig.totalMb}MB)`);
+
     if (serverData.startupCommand && serverData.startupCommand.trim()) {
-      const parts = serverData.startupCommand.trim().split(/\s+/);
+      const resolvedCmd = interpolateStartupCommand(serverData.startupCommand.trim(), serverData, jvmConfig);
+      const parts = resolvedCmd.trim().split(/\s+/);
       const bin = parts[0];
       const args = parts.slice(1);
+      logMessage(`Executing custom startup command: ${resolvedCmd}`);
       child = spawn(bin, args, {
         cwd: serverPath,
         stdio: ["pipe", "pipe", "pipe"]
       });
     } else {
-      child = spawn(javaBin, [
-        "-Xms128M",
-        `-Xmx${memoryMb}M`,
-        "-Dterminal.jline=false",
-        "-Dterminal.ansi=true",
-        "-Dfile.encoding=UTF-8",
+      const jarFileName = serverData.serverJar || "server.jar";
+      const jvmArgs = [
+        `-Xms${jvmConfig.formattedXms}`,
+        `-Xmx${jvmConfig.formattedXmx}`,
+        ...getStandardAikarFlags(),
         "-jar",
-        "server.jar",
+        jarFileName,
         "--nogui"
-      ], {
+      ];
+      child = spawn(javaBin, jvmArgs, {
         cwd: serverPath,
         stdio: ["pipe", "pipe", "pipe"]
       });

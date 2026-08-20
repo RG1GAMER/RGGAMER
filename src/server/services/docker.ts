@@ -10,6 +10,7 @@ import { panelEvents } from "../events.js"; // Import socket for logs
 import { readJSON } from "./db.js";
 import { downloadJar } from "./jarDownloader.js";
 import { getServerDiskUsageMB } from "./diskUsage.js";
+import { calculateJvmMemory, interpolateStartupCommand } from "../utils/jvmMemory.js";
 
 const getSocketPath = () => {
   if (process.platform === 'win32') return '//./pipe/docker_engine';
@@ -254,8 +255,8 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
     javaTag = "java16";
   } else if (verStr.startsWith("1.18") || verStr.startsWith("1.19") || verStr.startsWith("1.20.1") || verStr.startsWith("1.20.2") || verStr.startsWith("1.20.3") || verStr.startsWith("1.20.4")) {
     javaTag = "java17";
-  } else if (verStr.startsWith("26.") || verStr === "26.2" || verStr === "26.1.2") {
-    javaTag = "java21";
+  } else if (verStr.startsWith("26.") || verStr.startsWith("27.") || verStr === "26.2" || verStr === "26.1.2" || verStr === "26.1.1" || verStr === "26.1" || verStr === "26.0" || verStr === "26" || parseFloat(verStr) >= 26) {
+    javaTag = "java25";
   } else {
     javaTag = "java21";
   }
@@ -374,20 +375,24 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
     }
   }
 
+  const jvmConfig = calculateJvmMemory(serverData.ram || 2);
+
   let envVars: string[] = [];
   if (isNode) {
     envVars = [
       `PORT=${serverData.port}`,
       `SERVER_PORT=${serverData.port}`,
       `NODE_ENV=production`,
-      `MEMORY=${serverData.ram}G`
+      `MEMORY=${jvmConfig.totalMb}M`,
+      `MAX_RAM_MB=${jvmConfig.totalMb}`
     ];
   } else if (isPython) {
     envVars = [
       `PORT=${serverData.port}`,
       `SERVER_PORT=${serverData.port}`,
       `PYTHONUNBUFFERED=1`,
-      `MEMORY=${serverData.ram}G`
+      `MEMORY=${jvmConfig.totalMb}M`,
+      `MAX_RAM_MB=${jvmConfig.totalMb}`
     ];
   } else if (isProxy) {
     let proxyType = "VELOCITY";
@@ -397,7 +402,9 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
     envVars = [
       `TYPE=${proxyType}`,
       `SERVER_PORT=${serverData.port || 25577}`,
-      `MEMORY=${serverData.ram || 2}G`,
+      `MEMORY=${jvmConfig.formattedXmx}`,
+      `INIT_MEMORY=${jvmConfig.formattedXms}`,
+      `JVM_OPTS=-Xms${jvmConfig.formattedXms} -Xmx${jvmConfig.formattedXmx}`,
       `ONLINE_MODE=FALSE`,
       `CUSTOM_SERVER=/server/server.jar`
     ];
@@ -419,8 +426,8 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
     envVars = [
       `TYPE=${itzgType}`,
       `VERSION=${serverData.version || "latest"}`,
-      `MEMORY=${serverData.ram || 2}G`,
-      `INIT_MEMORY=256M`,
+      `MEMORY=${jvmConfig.formattedXmx}`,
+      `INIT_MEMORY=${jvmConfig.formattedXms}`,
       `SERVER_PORT=${serverData.port || 25565}`,
       `UID=0`,
       `GID=0`,
@@ -433,7 +440,7 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
       `OVERRIDE_SERVER_PROPERTIES=true`,
       `FORCE_REDOWNLOAD=false`,
       `CUSTOM_SERVER=/data/server.jar`,
-      `JVM_OPTS=-DPaper.IgnoreWorldDataVersion=true`,
+      `JVM_OPTS=-Xms${jvmConfig.formattedXms} -Xmx${jvmConfig.formattedXmx} -DPaper.IgnoreWorldDataVersion=true -Dpaper.ignoreWorldDataVersion=true`,
       `JVM_DD_OPTS=Paper.IgnoreWorldDataVersion=true,paper.ignoreWorldDataVersion=true`
     ];
   }
@@ -444,18 +451,21 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
     let cmd = undefined;
 
     if (isNode) {
-      cmd = ["/bin/sh", "-c", serverData.startupCommand || "if [ -f package.json ]; then npm install --omit=dev && npm start; elif [ -f index.js ]; then node index.js; elif [ -f app.js ]; then node app.js; elif [ -f server.js ]; then node server.js; elif [ -f main.js ]; then node main.js; elif [ -f bot.js ]; then node bot.js; elif [ -f test.js ]; then node test.js; else node $(ls *.js *.mjs 2>/dev/null | head -n 1 || echo index.js); fi"];
+      cmd = ["/bin/sh", "-c", serverData.startupCommand ? interpolateStartupCommand(serverData.startupCommand, serverData, jvmConfig) : "if [ -f package.json ]; then npm install --omit=dev && npm start; elif [ -f index.js ]; then node index.js; elif [ -f app.js ]; then node app.js; elif [ -f server.js ]; then node server.js; elif [ -f main.js ]; then node main.js; elif [ -f bot.js ]; then node bot.js; elif [ -f test.js ]; then node test.js; else node $(ls *.js *.mjs 2>/dev/null | head -n 1 || echo index.js); fi"];
     } else if (isPython) {
-      cmd = ["/bin/sh", "-c", serverData.startupCommand || "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi; if [ -f main.py ]; then python3 -u main.py; elif [ -f app.py ]; then python3 -u app.py; elif [ -f bot.py ]; then python3 -u bot.py; elif [ -f python.py ]; then python3 -u python.py; elif [ -f test.py ]; then python3 -u test.py; elif [ -f index.py ]; then python3 -u index.py; elif [ -f server.py ]; then python3 -u server.py; else python3 -u $(ls *.py 2>/dev/null | head -n 1 || echo main.py); fi"];
+      cmd = ["/bin/sh", "-c", serverData.startupCommand ? interpolateStartupCommand(serverData.startupCommand, serverData, jvmConfig) : "if [ -f requirements.txt ]; then pip install -r requirements.txt; fi; if [ -f main.py ]; then python3 -u main.py; elif [ -f app.py ]; then python3 -u app.py; elif [ -f bot.py ]; then python3 -u bot.py; elif [ -f python.py ]; then python3 -u python.py; elif [ -f test.py ]; then python3 -u test.py; elif [ -f index.py ]; then python3 -u index.py; elif [ -f server.py ]; then python3 -u server.py; else python3 -u $(ls *.py 2>/dev/null | head -n 1 || echo main.py); fi"];
     }
     
     if (serverData.dockerImage && serverData.dockerImage.includes('pterodactyl')) {
       binds = [`${containerBindPath}:/home/container`];
       workingDir = "/home/container";
       if (serverData.startupCommand) {
-        cmd = ["/bin/sh", "-c", serverData.startupCommand];
+        cmd = ["/bin/sh", "-c", interpolateStartupCommand(serverData.startupCommand, serverData, jvmConfig)];
       }
     }
+
+    const nanoCpus = Math.floor((Number(serverData.cpu) || 100) * 10000000);
+    const cpuShares = Math.min(2048, Math.max(128, Math.round(((Number(serverData.cpu) || 100) / 100) * 1024)));
     
     return {
       Image: img,
@@ -471,6 +481,10 @@ export const createServerContainer = async (serverData: any, nodeId?: string) =>
         [`${serverData.port}/udp`]: {}
       },
       HostConfig: {
+        Memory: jvmConfig.totalBytes,
+        MemorySwap: jvmConfig.totalBytes,
+        NanoCpus: nanoCpus > 0 ? nanoCpus : undefined,
+        CpuShares: cpuShares,
         PortBindings: {
           [`${serverData.port}/tcp`]: [
             {

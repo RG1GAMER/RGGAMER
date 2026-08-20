@@ -270,7 +270,22 @@ export default function CreateServer() {
   const portCheckIdRef = useRef(0);
   
   const [softwareCategory, setSoftwareCategory] = useState<'minecraft' | 'other'>('minecraft');
-  const [state, setState] = useState({
+  const [state, setState] = useState<{
+    name: string;
+    desc: string;
+    ram: number | string;
+    cpu: number | string;
+    disk: number | string;
+    ip: string;
+    port: number | string;
+    runtimeType: string;
+    owner: string;
+    node: string;
+    software: string;
+    version: string;
+    javaVersion: string;
+    auto: boolean;
+  }>({
     name: '', desc: '', ram: 4, cpu: 150, disk: 10, ip: '', port: 25565, runtimeType: 'docker', 
     owner: user?.id || '', node: '', software: 'paper', version: 'latest', javaVersion: '', auto: true
   });
@@ -304,7 +319,8 @@ export default function CreateServer() {
   useEffect(() => {
     if (currentStep < 2) return;
     
-    if (!state.port || state.port <= 0 || state.port > 65535) {
+    const portNum = Number(state.port);
+    if (!portNum || portNum <= 0 || portNum > 65535) {
       setPortStatus('invalid');
       return;
     }
@@ -372,14 +388,31 @@ export default function CreateServer() {
     setState(prev => ({ ...prev, [key]: val }));
   };
 
-  const handleRamChange = (ramVal: number) => {
+  const handleRamChange = (ramVal: number | string) => {
     setStepError(null);
-    const validRam = Math.max(0.25, Number(ramVal) || 0);
-    let newCpu = state.cpu;
-    if (state.auto && validRam > 0) {
-      newCpu = getAutoCpu(validRam);
+    if (ramVal === "" || ramVal === null || ramVal === undefined) {
+      setState(prev => ({ ...prev, ram: "" }));
+      return;
     }
-    setState(prev => ({ ...prev, ram: validRam, cpu: newCpu }));
+    const num = typeof ramVal === "number" ? ramVal : parseFloat(String(ramVal));
+    if (isNaN(num)) {
+      setState(prev => ({ ...prev, ram: "" }));
+      return;
+    }
+    let newCpu = state.cpu;
+    if (state.auto && num > 0) {
+      newCpu = getAutoCpu(num);
+    }
+    setState(prev => ({ ...prev, ram: ramVal, cpu: newCpu }));
+  };
+
+  const handleRamBlur = () => {
+    if (state.ram === "" || Number(state.ram) <= 0) {
+      handleRamChange(4);
+    } else {
+      const parsed = Math.max(0.25, Number(state.ram));
+      handleRamChange(parsed);
+    }
   };
 
   const handleRamClick = (ramVal: number) => {
@@ -388,10 +421,11 @@ export default function CreateServer() {
 
   const handleAutoToggle = () => {
     const nextAuto = !state.auto;
+    const currentRamNum = Number(state.ram) || 4;
     setState(prev => ({ 
       ...prev, 
       auto: nextAuto, 
-      cpu: nextAuto ? getAutoCpu(prev.ram) : prev.cpu 
+      cpu: nextAuto ? getAutoCpu(currentRamNum) : prev.cpu 
     }));
   };
 
@@ -428,9 +462,12 @@ export default function CreateServer() {
     
     // STEP 1: RESOURCES
     if (currentStep === 1) {
-      if (!state.ram || state.ram <= 0) updateState('ram', 4);
-      if (!state.cpu || state.cpu <= 0) updateState('cpu', 150);
-      if (!state.disk || state.disk <= 0) updateState('disk', 10);
+      const ramNum = Number(state.ram);
+      const cpuNum = Number(state.cpu);
+      const diskNum = Number(state.disk);
+      if (!ramNum || ramNum <= 0) updateState('ram', 4);
+      if (!cpuNum || cpuNum <= 0) updateState('cpu', 150);
+      if (!diskNum || diskNum <= 0) updateState('disk', 10);
       return true;
     }
 
@@ -604,10 +641,10 @@ export default function CreateServer() {
       const payload = {
         name: state.name,
         description: state.desc,
-        ram: state.ram,
-        cpuLimit: state.cpu,
-        diskLimit: state.disk,
-        port: state.port,
+        ram: Number(state.ram) || 4,
+        cpuLimit: Number(state.cpu) || 150,
+        diskLimit: Number(state.disk) || 10,
+        port: Number(state.port) || 25565,
         ipAlias: state.ip,
         type: state.software,
         version: state.version,
@@ -822,7 +859,7 @@ export default function CreateServer() {
                         key={r.v} 
                         type="button" 
                         onClick={() => handleRamClick(r.v)}
-                        className={`sel-card p-4 text-left ${r.v === state.ram ? 'selected' : ''}`}
+                        className={`sel-card p-4 text-left ${r.v === Number(state.ram) ? 'selected' : ''}`}
                       >
                         <span className="tick"><Check className="w-3 h-3 stroke-[3]" /></span>
                         <div className="font-display font-bold text-2xl text-white">
@@ -846,7 +883,7 @@ export default function CreateServer() {
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-mono px-2.5 py-1 bg-white/5 border border-white/10 rounded text-theme-300">
-                          Selected: <strong className="text-white font-bold">{state.ram || 0} GB</strong>
+                          Selected: <strong className="text-white font-bold">{state.ram ? `${state.ram} GB` : '—'}</strong>
                         </span>
                       </div>
                     </div>
@@ -857,12 +894,10 @@ export default function CreateServer() {
                           type="number"
                           min="0.25"
                           step="0.5"
-                          placeholder="e.g. 3, 6, 10, 12, 20..."
-                          value={state.ram === 0 ? '' : state.ram}
-                          onChange={(e) => {
-                            const val = e.target.value === '' ? 0 : parseFloat(e.target.value);
-                            handleRamChange(isNaN(val) ? 0 : val);
-                          }}
+                          placeholder="e.g. 4, 8, 16..."
+                          value={state.ram}
+                          onChange={(e) => handleRamChange(e.target.value)}
+                          onBlur={handleRamBlur}
                           className="inp font-mono pr-12 text-base font-bold text-white"
                         />
                         <span className="absolute right-4 top-1/2 -translate-y-1/2 text-sm font-mono text-[#8f8f8f] font-semibold">
@@ -911,8 +946,18 @@ export default function CreateServer() {
                           <input 
                             type="number" min="10" 
                             className="inp font-mono pr-10" 
+                            placeholder="150"
                             value={state.cpu}
-                            onChange={(e) => { updateState('cpu', Number(e.target.value)); updateState('auto', false); }}
+                            onChange={(e) => { 
+                              const v = e.target.value;
+                              updateState('cpu', v); 
+                              updateState('auto', false); 
+                            }}
+                            onBlur={() => {
+                              if (state.cpu === '' || Number(state.cpu) < 10) {
+                                updateState('cpu', state.auto ? getAutoCpu(Number(state.ram) || 4) : 100);
+                              }
+                            }}
                           />
                           <span className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#4c4c4c] font-mono text-sm">%</span>
                         </div>
@@ -926,7 +971,7 @@ export default function CreateServer() {
                       </div>
                       <p className={`text-[11px] mt-2.5 font-mono flex items-center gap-1.5 ${state.auto ? 'text-[#8f8f8f]' : 'text-[#4c4c4c]'}`}>
                         {state.auto 
-                          ? <><Sparkles className="w-3.5 h-3.5" /> Auto-optimized for {state.ram}GB</> 
+                          ? <><Sparkles className="w-3.5 h-3.5" /> Auto-optimized for {state.ram || 4}GB</> 
                           : <><SlidersHorizontal className="w-3.5 h-3.5" /> Manual override active</>
                         }
                       </p>
@@ -939,8 +984,17 @@ export default function CreateServer() {
                       <input 
                         type="number" min="1" 
                         className="inp font-mono" 
+                        placeholder="10"
                         value={state.disk}
-                        onChange={(e) => updateState('disk', Number(e.target.value))}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          updateState('disk', v);
+                        }}
+                        onBlur={() => {
+                          if (state.disk === '' || Number(state.disk) < 1) {
+                            updateState('disk', 10);
+                          }
+                        }}
                       />
                       <p className="text-[11px] text-[#4c4c4c] mt-2.5 font-mono flex items-center gap-1.5">
                         <Info className="w-3.5 h-3.5" /> Storage space allocated to this server.
@@ -1354,10 +1408,10 @@ export default function CreateServer() {
                         <div className="px-4 py-4">
                           <div className="flex justify-between text-[10px] text-[#4c4c4c] tracking-widest mb-2 font-mono">
                             <span>EST. HOST FOOTPRINT</span>
-                            <span>{Math.min(100, Math.round(state.ram / 32 * 100))}%</span>
+                            <span>{Math.min(100, Math.round((Number(state.ram) || 4) / 32 * 100))}%</span>
                           </div>
                           <div className="w-full bg-[#232323] h-1.5 overflow-hidden">
-                            <div className="h-full bg-white transition-all duration-500" style={{ width: `${Math.min(100, Math.round(state.ram / 32 * 100))}%` }}></div>
+                            <div className="h-full bg-white transition-all duration-500" style={{ width: `${Math.min(100, Math.round((Number(state.ram) || 4) / 32 * 100))}%` }}></div>
                           </div>
                         </div>
                       </div>

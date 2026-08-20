@@ -1400,10 +1400,230 @@ export const installMod = async (req: Request, res: Response) => {
       writer.on('error', reject);
     });
 
-    res.json({ success: true, message: "Mod installed successfully" });
+    res.json({ success: true, message: `Mod '${filename}' installed successfully! Restart the server to apply changes.` });
   } catch (error: any) {
     console.error("Mod installation failed:", error.message);
     res.status(500).json({ error: "Mod installation failed: " + error.message });
+  }
+};
+
+export const installResourcePack = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const serversJSON = await readJSON("servers.json");
+  const server = serversJSON?.find((s: any) => s.id === id);
+  if (!server) return res.status(404).json({ error: "Server not found" });
+
+  const { projectId, projectName, versionId, applyToProperties } = req.body;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing projectId" });
+  }
+
+  try {
+    const serverDir = path.join(process.cwd(), ".data", "servers", id);
+    const rpDir = path.join(serverDir, "resourcepacks");
+    await fs.ensureDir(rpDir);
+
+    let downloadUrl = null;
+    let filename = `${(projectName || projectId).replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+    const axios = (await import("axios")).default;
+
+    const url = versionId 
+      ? `https://api.modrinth.com/v2/version/${versionId}`
+      : `https://api.modrinth.com/v2/project/${projectId}/version`;
+
+    const verRes = await axios.get(url);
+    const versionData = Array.isArray(verRes.data) ? verRes.data[0] : verRes.data;
+
+    if (versionData && versionData.files && versionData.files.length > 0) {
+      const file = versionData.files.find((f: any) => f.primary) || versionData.files[0];
+      if (file) {
+        downloadUrl = file.url;
+        filename = file.filename || filename;
+      }
+    }
+
+    if (!downloadUrl) {
+      return res.status(404).json({ error: "Could not find a downloadable file for this resource pack." });
+    }
+
+    if (!filename.toLowerCase().endsWith(".zip")) {
+      filename += ".zip";
+    }
+
+    const filePath = path.join(rpDir, filename);
+    const response = await axios({
+      url: downloadUrl,
+      method: "GET",
+      responseType: "stream",
+      headers: { "User-Agent": "React-Minecraft-Panel/1.0" }
+    });
+
+    const writer = fs.createWriteStream(filePath);
+    response.data.pipe(writer);
+
+    await new Promise<void>((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
+
+    // Optionally update server.properties resource-pack
+    if (applyToProperties && downloadUrl) {
+      try {
+        const propsPath = path.join(serverDir, "server.properties");
+        if (await fs.pathExists(propsPath)) {
+          let props = await fs.readFile(propsPath, "utf-8");
+          if (/^resource-pack=.*$/m.test(props)) {
+            props = props.replace(/^resource-pack=.*$/m, `resource-pack=${downloadUrl}`);
+          } else {
+            props += `\nresource-pack=${downloadUrl}\n`;
+          }
+          await fs.writeFile(propsPath, props, "utf-8");
+        }
+      } catch (propErr) {
+        console.error("Failed to update server.properties resource-pack:", propErr);
+      }
+    }
+
+    res.json({ success: true, message: `Resource Pack '${filename}' installed successfully into /resourcepacks!` });
+  } catch (error: any) {
+    console.error("Resource pack installation failed:", error.message);
+    res.status(500).json({ error: "Resource pack installation failed: " + error.message });
+  }
+};
+
+export const installDatapack = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const serversJSON = await readJSON("servers.json");
+  const server = serversJSON?.find((s: any) => s.id === id);
+  if (!server) return res.status(404).json({ error: "Server not found" });
+
+  const { projectId, projectName, versionId, targetWorld = "world" } = req.body;
+  if (!projectId) {
+    return res.status(400).json({ error: "Missing projectId" });
+  }
+
+  try {
+    const serverDir = path.join(process.cwd(), ".data", "servers", id);
+    const dpDir = path.join(serverDir, targetWorld, "datapacks");
+    await fs.ensureDir(dpDir);
+
+    let downloadUrl = null;
+    let filename = `${(projectName || projectId).replace(/[^a-zA-Z0-9_-]/g, '_')}.zip`;
+    const axios = (await import("axios")).default;
+
+    const url = versionId 
+      ? `https://api.modrinth.com/v2/version/${versionId}`
+      : `https://api.modrinth.com/v2/project/${projectId}/version`;
+
+    const verRes = await axios.get(url);
+    const versionData = Array.isArray(verRes.data) ? verRes.data[0] : verRes.data;
+
+    if (versionData && versionData.files && versionData.files.length > 0) {
+      const file = versionData.files.find((f: any) => f.primary) || versionData.files[0];
+      if (file) {
+        downloadUrl = file.url;
+        filename = file.filename || filename;
+      }
+    }
+
+    if (!downloadUrl) {
+      return res.status(404).json({ error: "Could not find a downloadable file for this datapack." });
+    }
+
+    if (!filename.toLowerCase().endsWith(".zip")) {
+      filename += ".zip";
+    }
+
+    const filePath = path.join(dpDir, filename);
+    const response = await axios({
+      url: downloadUrl,
+      method: "GET",
+      responseType: "stream",
+      headers: { "User-Agent": "React-Minecraft-Panel/1.0" }
+    });
+
+    const writer = fs.createWriteStream(filePath);
+    response.data.pipe(writer);
+
+    await new Promise<void>((resolve, reject) => {
+      writer.on("finish", resolve);
+      writer.on("error", reject);
+    });
+
+    res.json({ success: true, message: `Datapack '${filename}' installed successfully into /${targetWorld}/datapacks!` });
+  } catch (error: any) {
+    console.error("Datapack installation failed:", error.message);
+    res.status(500).json({ error: "Datapack installation failed: " + error.message });
+  }
+};
+
+export const getInstalledAddons = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const serverDir = path.join(process.cwd(), ".data", "servers", id);
+    const modsDir = path.join(serverDir, "mods");
+    const rpDir = path.join(serverDir, "resourcepacks");
+    const dpDir = path.join(serverDir, "world", "datapacks");
+
+    const getFiles = async (dir: string, type: string) => {
+      try {
+        if (!await fs.pathExists(dir)) return [];
+        const entries = await fs.readdir(dir);
+        const result = [];
+        for (const name of entries) {
+          const full = path.join(dir, name);
+          const stat = await fs.stat(full);
+          if (stat.isFile()) {
+            result.push({
+              name,
+              size: stat.size,
+              modified: stat.mtime,
+              type,
+              path: path.relative(serverDir, full)
+            });
+          }
+        }
+        return result;
+      } catch {
+        return [];
+      }
+    };
+
+    const [mods, resourcepacks, datapacks] = await Promise.all([
+      getFiles(modsDir, "mod"),
+      getFiles(rpDir, "resourcepack"),
+      getFiles(dpDir, "datapack")
+    ]);
+
+    res.json({ mods, resourcepacks, datapacks });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+export const deleteAddonFile = async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { filePath } = req.body;
+  if (!filePath) return res.status(400).json({ error: "Missing filePath" });
+
+  try {
+    const serverDir = path.join(process.cwd(), ".data", "servers", id);
+    const normalized = path.normalize(filePath).replace(/^(\.\.[\/\\])+/, '');
+    const target = path.join(serverDir, normalized);
+
+    // Security check: ensure target is inside serverDir and inside mods, resourcepacks or datapacks
+    if (!target.startsWith(serverDir)) {
+      return res.status(403).json({ error: "Invalid file path" });
+    }
+
+    if (await fs.pathExists(target)) {
+      await fs.remove(target);
+      return res.json({ success: true, message: "File removed successfully" });
+    } else {
+      return res.status(404).json({ error: "File not found" });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
   }
 };
 
@@ -1412,25 +1632,62 @@ export const updateResources = async (req: Request, res: Response) => {
     const { id } = req.params;
     const { ram, cpu, disk } = req.body;
     const servers = await readJSON("servers.json") || [];
-    const server = servers.find((s: any) => s.id === id);
-    if (!server) return res.status(404).json({ error: "Server not found" });
+    const serverIndex = servers.findIndex((s: any) => s.id === id);
+    if (serverIndex === -1) return res.status(404).json({ error: "Server not found" });
+    const server = servers[serverIndex];
     if ((req as any).user.role !== "admin" && (req as any).user.role !== "owner") return res.status(403).json({ error: "Unauthorized" });
 
-    server.ram = Number(ram);
-    server.cpu = Number(cpu);
-    server.disk = Number(disk);
-    await writeJSON("servers.json", servers);
+    const newRam = Math.max(0.5, Number(ram) || 2);
+    const newCpu = Math.max(10, Number(cpu) || 100);
+    const newDisk = Math.max(1, Number(disk) || 10);
 
-    // Stop container if running
-    if (server.containerId) {
-       try {
-         await stopServerRuntime(server);
-       } catch(e) {}
+    server.ram = newRam;
+    server.cpu = newCpu;
+    server.disk = newDisk;
+
+    // Check if container was running before resource update
+    let wasRunning = false;
+    try {
+      const status: any = await getServerRuntimeStatus(server);
+      wasRunning = !!(status?.State?.Running || status?.running || server.status === "online");
+    } catch (e) {
+      wasRunning = server.status === "online";
     }
 
+    // Stop and delete old container/runtime instance to enforce new memory & CPU limits
+    if (server.containerId) {
+      try {
+        await stopServerRuntime(server);
+      } catch (e) {}
+      try {
+        await deleteServerRuntime(server);
+      } catch (e) {}
+    }
+
+    // Recreate container/runtime environment with updated resources and dynamic JVM memory allocation
+    const newContainerId = await createServerRuntime(server);
+    server.containerId = newContainerId;
+
+    if (wasRunning) {
+      try {
+        await startServerRuntime(server);
+        server.status = "online";
+        server.startedAt = new Date().toISOString();
+      } catch (startErr) {
+        console.warn("Could not auto-restart server after resource update:", startErr);
+        server.status = "offline";
+      }
+    } else {
+      server.status = "offline";
+    }
+
+    servers[serverIndex] = server;
+    await writeJSON("servers.json", servers);
+
     res.json(server);
-  } catch (error) {
-    res.status(500).json({ error: "Failed to update resources" });
+  } catch (error: any) {
+    console.error("Failed to update resources:", error);
+    res.status(500).json({ error: "Failed to update resources: " + (error?.message || error) });
   }
 };
 

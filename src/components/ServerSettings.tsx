@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from "react"; 
 import { LoadingOverlay } from "../components/LoadingOverlay";
-import { Trash2, AlertTriangle, User, Save, Globe, RefreshCw, Sliders, Code2, TerminalSquare, Info, Lock, Download } from "lucide-react";
+import { Trash2, AlertTriangle, User, Save, Globe, RefreshCw, Sliders, Code2, TerminalSquare, Info, Lock, Download, Cpu, HardDrive, Zap, CheckCircle2 } from "lucide-react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
@@ -16,6 +16,13 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
   const [ipAlias, setIpAlias] = useState(server?.ipAlias || "");
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingAlias, setIsSavingAlias] = useState(false);
+
+  // Resource Management States
+  const [ram, setRam] = useState<number>(server?.ram || 2);
+  const [cpu, setCpu] = useState<number>(server?.cpu || 100);
+  const [disk, setDisk] = useState<number>(server?.disk || 10);
+  const [isSavingResources, setIsSavingResources] = useState(false);
+  const [resourceMessage, setResourceMessage] = useState<{ text: string; type: "success" | "error" } | null>(null);
   
   const [versions, setVersions] = useState<string[]>([]);
   const [selectedVersion, setSelectedVersion] = useState(server?.version || "");
@@ -46,6 +53,9 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
       setStartupCommand(server.startupCommand || "");
       setOwner(server.owner || "");
       setIpAlias(server.ipAlias || "");
+      setRam(server.ram || 2);
+      setCpu(server.cpu || 100);
+      setDisk(server.disk || 10);
     }
   }, [server]);
   
@@ -162,6 +172,29 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
       alert("Failed to update IP Alias");
     } finally {
       setIsSavingAlias(false);
+    }
+  };
+
+  const handleUpdateResources = async () => {
+    try {
+      setIsSavingResources(true);
+      setResourceMessage(null);
+      await axios.put(`/api/servers/${serverId}/resources`, {
+        ram: Number(ram),
+        cpu: Number(cpu),
+        disk: Number(disk)
+      });
+      setResourceMessage({
+        type: "success",
+        text: "Resource limits updated and container recreated successfully with dynamic JVM memory calculation."
+      });
+    } catch (e: any) {
+      setResourceMessage({
+        type: "error",
+        text: e.response?.data?.error || "Failed to update resources and recreate container."
+      });
+    } finally {
+      setIsSavingResources(false);
     }
   };
 
@@ -572,8 +605,132 @@ export default function ServerSettings({ serverId, server }: { serverId: string,
 
             {(user?.role === "admin" || user?.role === "owner") ? (
               <>
+                <div className="bg-black/40 dark:bg-black/40 backdrop-blur-xl border border-border p-6 md:p-8 rounded-3xl shadow-[0_0_40px_-15px_rgba(0,0,0,0.5)] ring-1 ring-border-subtle relative z-10 group hover:bg-black/60 transition-colors mb-8">
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-theme-500 font-bold flex items-center">
+                      <Cpu className="w-5 h-5 mr-2" /> Resource Limits & JVM Memory
+                    </h3>
+                    <span className="text-xs px-2.5 py-1 rounded-full bg-theme-600/10 text-theme-500 border border-theme-600/20 font-medium">
+                      Auto-Recreates Container
+                    </span>
+                  </div>
+                  <p className="text-muted-foreground text-sm mb-6">
+                    Adjust resource limits allocated to this server. Updating resources dynamically calculates JVM heap allocation with off-heap safety headroom and recreates the container to apply strict limits.
+                  </p>
 
-                <div className="bg-black/40 dark:bg-black/40 backdrop-blur-xl border border-border p-6 md:p-8 rounded-3xl shadow-[0_0_40px_-15px_rgba(0,0,0,0.5)] ring-1 ring-border-subtle relative z-10 group hover:bg-black/60 transition-colors">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                    {/* RAM */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                        <span className="flex items-center"><Zap className="w-3.5 h-3.5 mr-1 text-theme-500" /> RAM (GB)</span>
+                        <span className="text-foreground font-mono font-bold">{ram} GB ({Math.round(ram * 1024)} MB)</span>
+                      </label>
+                      <input 
+                        type="number" 
+                        min="0.5" 
+                        max="128" 
+                        step="0.5"
+                        value={ram}
+                        onChange={e => setRam(Math.max(0.5, parseFloat(e.target.value) || 0.5))}
+                        className="w-full bg-card border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-4 py-2.5 text-foreground transition-all shadow-inner outline-none font-mono"
+                      />
+                    </div>
+
+                    {/* CPU */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                        <span className="flex items-center"><Cpu className="w-3.5 h-3.5 mr-1 text-theme-500" /> CPU Limit (%)</span>
+                        <span className="text-foreground font-mono font-bold">{cpu}%</span>
+                      </label>
+                      <input 
+                        type="number" 
+                        min="10" 
+                        max="1600" 
+                        step="10"
+                        value={cpu}
+                        onChange={e => setCpu(Math.max(10, parseInt(e.target.value) || 10))}
+                        className="w-full bg-card border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-4 py-2.5 text-foreground transition-all shadow-inner outline-none font-mono"
+                      />
+                    </div>
+
+                    {/* Disk */}
+                    <div className="space-y-2">
+                      <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider flex items-center justify-between">
+                        <span className="flex items-center"><HardDrive className="w-3.5 h-3.5 mr-1 text-theme-500" /> Disk Space (GB)</span>
+                        <span className="text-foreground font-mono font-bold">{disk} GB</span>
+                      </label>
+                      <input 
+                        type="number" 
+                        min="1" 
+                        max="1000" 
+                        step="1"
+                        value={disk}
+                        onChange={e => setDisk(Math.max(1, parseInt(e.target.value) || 1))}
+                        className="w-full bg-card border border-border focus:border-theme-600 focus:ring-1 focus:ring-theme-600/50 rounded-xl px-4 py-2.5 text-foreground transition-all shadow-inner outline-none font-mono"
+                      />
+                    </div>
+                  </div>
+
+                  {/* Dynamic JVM Calculation Live Preview */}
+                  {(() => {
+                    const totalMb = Math.round((ram || 2) * 1024);
+                    const headroomMb = Math.max(384, Math.min(2048, Math.round(totalMb * 0.14)));
+                    const heapMaxMb = Math.max(256, totalMb - headroomMb);
+                    const heapInitMb = Math.max(128, Math.min(1024, Math.round(heapMaxMb * 0.25)));
+
+                    return (
+                      <div className="p-4 rounded-2xl bg-card/60 border border-border/80 mb-6 text-xs">
+                        <div className="flex items-center justify-between mb-2">
+                          <span className="font-semibold text-foreground flex items-center">
+                            <Info className="w-4 h-4 mr-1.5 text-theme-500" /> Dynamic Memory Allocation Formula
+                          </span>
+                          <span className="font-mono text-muted-foreground">Total Cgroup Memory: {totalMb} MB</span>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-2 text-muted-foreground font-mono">
+                          <div className="bg-background/80 p-2.5 rounded-xl border border-border/50">
+                            <span className="text-foreground font-semibold block text-[11px] uppercase tracking-wider mb-1">JVM Max Heap (-Xmx)</span>
+                            <span className="text-theme-500 text-sm font-bold">{heapMaxMb} MB</span> ({Math.round((heapMaxMb / totalMb) * 100)}%)
+                          </div>
+                          <div className="bg-background/80 p-2.5 rounded-xl border border-border/50">
+                            <span className="text-foreground font-semibold block text-[11px] uppercase tracking-wider mb-1">Off-Heap Headroom</span>
+                            <span className="text-amber-500 text-sm font-bold">{headroomMb} MB</span> (Native, Metaspace, GC)
+                          </div>
+                          <div className="bg-background/80 p-2.5 rounded-xl border border-border/50">
+                            <span className="text-foreground font-semibold block text-[11px] uppercase tracking-wider mb-1">JVM Initial Heap (-Xms)</span>
+                            <span className="text-foreground text-sm font-bold">{heapInitMb} MB</span>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {resourceMessage && (
+                    <div className={`p-4 rounded-xl mb-4 text-sm flex items-center ${
+                      resourceMessage.type === "success" 
+                        ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" 
+                        : "bg-red-500/10 text-red-400 border border-red-500/20"
+                    }`}>
+                      {resourceMessage.type === "success" ? (
+                        <CheckCircle2 className="w-4 h-4 mr-2 flex-shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 mr-2 flex-shrink-0" />
+                      )}
+                      {resourceMessage.text}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end">
+                    <button 
+                      onClick={handleUpdateResources}
+                      disabled={isSavingResources || (ram === server.ram && cpu === server.cpu && disk === server.disk)}
+                      className="px-6 py-2.5 bg-theme-600 hover:bg-theme-500 text-black font-semibold rounded-xl transition-all disabled:opacity-50 flex items-center shadow-lg shadow-theme-600/20"
+                    >
+                      <Save className="w-4 h-4 mr-2" /> {isSavingResources ? "Recreating Container..." : "Apply & Recreate Container"}
+                    </button>
+                  </div>
+                </div>
+
+                <div className="bg-black/40 dark:bg-black/40 backdrop-blur-xl border border-border p-6 md:p-8 rounded-3xl shadow-[0_0_40px_-15px_rgba(0,0,0,0.5)] ring-1 ring-border-subtle relative z-10 group hover:bg-black/60 transition-colors mb-8">
                   <h3 className="text-theme-500 font-bold mb-2 flex items-center">
                     <User className="w-5 h-5 mr-2" /> Server Ownership
                   </h3>

@@ -2,7 +2,7 @@ import express from "express";
 import path from "path";
 import { importWorld, getWorldInfo, analyzeWorld, listWorlds, optimizeWorld, generateWorld, downloadWorld, setActiveWorld, deleteWorld } from "../controllers/world.js";
 import { requireAuth } from "../middleware/auth.js";
-import { getServers, createServer, checkPort, getServer, deleteServer, startServer, stopServer, restartServer, changeServerVersion, migrateServerRuntime, getFiles, uploadFile, uploadChunk, completeUpload, deleteFile, renameFile, saveFileContent, sendCommand, getServerStats, updateOwner, updateIpAlias, getBackups, createBackup, downloadBackup, deleteBackup, restoreBackup, unzipFile, zipFiles, installPlugin, installMod, updateResources, updateSuspend , createFile, createDirectory, downloadFile, redownloadJar } from "../controllers/servers.js";
+import { getServers, createServer, checkPort, getServer, deleteServer, startServer, stopServer, restartServer, changeServerVersion, migrateServerRuntime, getFiles, uploadFile, uploadChunk, completeUpload, deleteFile, renameFile, saveFileContent, sendCommand, getServerStats, updateOwner, updateIpAlias, getBackups, createBackup, downloadBackup, deleteBackup, restoreBackup, unzipFile, zipFiles, installPlugin, installMod, installResourcePack, installDatapack, getInstalledAddons, deleteAddonFile, updateResources, updateSuspend , createFile, createDirectory, downloadFile, redownloadJar } from "../controllers/servers.js";
 import multer from "multer";
 
 const router = express.Router();
@@ -309,4 +309,8 @@ router.delete("/:id/sftp", async (req, res) => {
 
 router.post("/:id/plugins/install", installPlugin);
 router.post("/:id/mods/install", installMod);
+router.post("/:id/resourcepacks/install", installResourcePack);
+router.post("/:id/datapacks/install", installDatapack);
+router.get("/:id/installed-addons", getInstalledAddons);
+router.delete("/:id/addon", deleteAddonFile);
 export default router;

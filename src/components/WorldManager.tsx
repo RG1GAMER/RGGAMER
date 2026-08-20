@@ -7,7 +7,6 @@ import {
   Flame,
   Sparkles,
   Zap,
-  FolderTree,
   RefreshCw,
   AlertCircle,
   HelpCircle,
@@ -20,7 +19,8 @@ import {
   Plus,
   SlidersHorizontal,
   Trash2,
-  PlayCircle
+  PlayCircle,
+  Compass
 } from "lucide-react";
 import { LoadingOverlay } from "../components/LoadingOverlay";
 
@@ -74,11 +74,11 @@ export default function WorldManager({
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [optimizeResult, setOptimizeResult] = useState<any>(null);
 
-  // Documentation Accordion expanded states
+  // Help Accordions
   const [expandedDocs, setExpandedDocs] = useState<{ [key: string]: boolean }>({
-    upload: true,
+    dimensions: true,
+    upload: false,
     optimize: false,
-    download: false
   });
 
   const showToast = (message: string, type: "success" | "error" = "success") => {
@@ -141,14 +141,14 @@ export default function WorldManager({
 
       setUploadProgress(null);
 
-      // Trigger automatic extraction & placement into target world folder
+      // Automatic extraction & placement into target world folder
       const importRes = await axios.post(`/api/servers/${serverId}/world/import`, {
         zipPath: uploadFile.name,
         targetFolderName: uploadModalWorld,
         autoUpdateProperties: uploadModalWorld === "world",
       });
 
-      showToast(importRes.data.message || `World uploaded and placed into /${uploadModalWorld} successfully!`);
+      showToast(importRes.data.message || `World uploaded and extracted to /${uploadModalWorld} successfully!`);
       setUploadModalWorld(null);
       setUploadFile(null);
       await fetchWorlds();
@@ -197,7 +197,6 @@ export default function WorldManager({
     try {
       setIsGenerating(true);
 
-      // Stop server if running
       if (isServerRunning) {
         try {
           await axios.post(`/api/servers/${serverId}/stop`);
@@ -249,49 +248,65 @@ export default function WorldManager({
     }
   };
 
-  const getDimensionIcon = (dim: string) => {
-    switch (dim) {
-      case "nether":
-        return <Flame className="w-6 h-6 text-rose-500" />;
-      case "end":
-        return <Sparkles className="w-6 h-6 text-purple-400" />;
-      case "custom":
-        return <Globe className="w-6 h-6 text-cyan-400" />;
-      default:
-        return <Globe className="w-6 h-6 text-emerald-400" />;
+  // Explicit Aternos-style dimension information
+  const getDimensionMeta = (world: WorldItem) => {
+    if (world.dimension === "overworld" || world.name === "world") {
+      return {
+        label: "World (Overworld)",
+        dimensionName: "Overworld",
+        description: "The primary surface world with regular terrain, biomes, and daylight cycle.",
+        icon: <Globe className="w-6 h-6 text-emerald-400" />,
+        badgeClass: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
+        accentBorder: "border-emerald-500/20 hover:border-emerald-500/40",
+      };
     }
-  };
-
-  const getDimensionBadge = (dim: string, worldName: string) => {
-    switch (dim) {
-      case "nether":
-        return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-rose-500/10 text-rose-400 border border-rose-500/30">Nether</span>;
-      case "end":
-        return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-purple-500/10 text-purple-400 border border-purple-500/30">The End</span>;
-      case "custom":
-        return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-cyan-500/10 text-cyan-400 border border-cyan-500/30">Custom World</span>;
-      default:
-        return <span className="px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">Overworld</span>;
+    if (world.dimension === "nether" || world.name.includes("nether")) {
+      return {
+        label: "World Nether",
+        dimensionName: "Nether",
+        description: "The fiery underworld dimension containing nether fortresses and bastions.",
+        icon: <Flame className="w-6 h-6 text-rose-500" />,
+        badgeClass: "bg-rose-500/10 text-rose-400 border-rose-500/30",
+        accentBorder: "border-rose-500/20 hover:border-rose-500/40",
+      };
     }
+    if (world.dimension === "end" || world.name.includes("the_end") || world.name.includes("end")) {
+      return {
+        label: "World End",
+        dimensionName: "The End",
+        description: "The dark void dimension home to the Ender Dragon, End Cities, and Elytras.",
+        icon: <Sparkles className="w-6 h-6 text-purple-400" />,
+        badgeClass: "bg-purple-500/10 text-purple-400 border-purple-500/30",
+        accentBorder: "border-purple-500/20 hover:border-purple-500/40",
+      };
+    }
+    return {
+      label: world.name,
+      dimensionName: "Custom World",
+      description: "Additional world or map directory loaded on the server.",
+      icon: <Compass className="w-6 h-6 text-cyan-400" />,
+      badgeClass: "bg-cyan-500/10 text-cyan-400 border-cyan-500/30",
+      accentBorder: "border-cyan-500/20 hover:border-cyan-500/40",
+    };
   };
 
   return (
     <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8 text-foreground bg-transparent">
-      <div className="max-w-5xl mx-auto space-y-6 md:space-y-8">
+      <div className="max-w-5xl mx-auto space-y-6">
         
-        {/* HEADER */}
-        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+        {/* ATERNOS-STYLE SIMPLE HEADER */}
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between pb-2 border-b border-border-subtle">
           <div>
             <h2 className="text-2xl md:text-3xl font-black text-foreground tracking-tight flex items-center gap-3">
-              <Globe className="w-8 h-8 text-theme-500" />
+              <Globe className="w-7 h-7 text-theme-500" />
               Worlds
             </h2>
             <p className="text-xs font-mono text-zinc-400 mt-1">
-              Manage Overworld, Nether, The End, and custom worlds (e.g. survival, lobby) for your server.
+              Manage your Minecraft server dimensions: Overworld, Nether, and The End.
             </p>
           </div>
           
-          <div className="flex items-center gap-2.5">
+          <div className="flex items-center gap-2">
             <button
               onClick={() => {
                 setIsNewWorldModal(true);
@@ -301,16 +316,16 @@ export default function WorldManager({
               className="px-4 py-2 bg-theme-600 hover:bg-theme-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-theme-600/20"
             >
               <Plus className="w-4 h-4" />
-              Create New World
+              Generate World
             </button>
 
             <button
               onClick={fetchWorlds}
               disabled={isLoading}
-              className="px-3.5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 hover:text-white rounded-xl text-xs font-mono transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              className="p-2.5 bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-300 hover:text-white rounded-xl text-xs transition-all flex items-center justify-center cursor-pointer disabled:opacity-50"
+              title="Refresh world status"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`} />
-              Refresh
+              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
             </button>
           </div>
         </div>
@@ -326,225 +341,239 @@ export default function WorldManager({
               {toast.type === "success" ? <Check className="w-4 h-4 text-emerald-400 shrink-0" /> : <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />}
               <span>{toast.message}</span>
             </div>
-            <button onClick={() => setToast(null)} className="text-xs font-mono opacity-70 hover:opacity-100 ml-3 px-2 py-1 bg-white/5 hover:bg-white/10 rounded">Dismiss</button>
+            <button onClick={() => setToast(null)} className="text-xs font-mono opacity-70 hover:opacity-100 ml-3 px-2 py-1 bg-white/5 hover:bg-white/10 rounded cursor-pointer">Dismiss</button>
           </div>
         )}
 
-        {/* WORLDS LIST (ATERNOS STYLE CARDS) */}
+        {/* DIRECT ATERNOS WORLD LIST */}
         <div className="space-y-4">
           {isLoading ? (
             <div className="bg-black/40 backdrop-blur-xl border border-border p-12 rounded-3xl text-center text-zinc-400 flex flex-col items-center justify-center">
               <RefreshCw className="w-8 h-8 animate-spin mb-4 text-theme-500" />
-              <p className="font-mono text-sm">Scanning world files...</p>
+              <p className="font-mono text-sm">Scanning server world files...</p>
             </div>
           ) : worlds.length === 0 ? (
             <div className="bg-black/40 backdrop-blur-xl border border-border p-12 rounded-3xl text-center text-zinc-400 flex flex-col items-center justify-center">
               <AlertCircle className="w-10 h-10 mb-3 text-zinc-500" />
               <h4 className="text-base font-bold text-zinc-200">No world folder found</h4>
               <p className="text-xs text-zinc-400 mt-1 max-w-sm">
-                A world will be generated automatically when you start your server, or you can create one now.
+                A world will be generated automatically when your server starts, or you can create one now.
               </p>
             </div>
           ) : (
-            worlds.map((world) => (
-              <div
-                key={world.id}
-                className="bg-black/40 dark:bg-black/40 backdrop-blur-xl border border-border rounded-3xl p-5 md:p-6 shadow-xl ring-1 ring-border-subtle hover:border-theme-500/30 transition-all space-y-4"
-              >
-                <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-4">
-                  {/* WORLD INFO */}
-                  <div className="flex items-center gap-4">
-                    <div className="w-14 h-14 rounded-2xl bg-zinc-900 border border-border flex items-center justify-center shrink-0 shadow-inner">
-                      {getDimensionIcon(world.dimension)}
-                    </div>
-                    <div>
-                      <div className="flex flex-wrap items-center gap-2.5">
-                        <h3 className="text-xl font-black text-white tracking-tight">{world.name}</h3>
-                        {getDimensionBadge(world.dimension, world.name)}
-                        {world.isDefault ? (
-                          <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-theme-500/20 text-theme-400 border border-theme-500/40">
-                            Active Server World
+            worlds.map((world) => {
+              const meta = getDimensionMeta(world);
+              return (
+                <div
+                  key={world.id}
+                  className={`bg-black/40 dark:bg-black/40 backdrop-blur-xl border rounded-3xl p-5 md:p-6 shadow-xl transition-all ${meta.accentBorder}`}
+                >
+                  <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-5">
+                    
+                    {/* LEFT: EXPLICIT ATERNOS LABELS & WORLD INFO */}
+                    <div className="flex items-center gap-4">
+                      <div className="w-14 h-14 rounded-2xl bg-zinc-900/90 border border-border flex items-center justify-center shrink-0 shadow-inner">
+                        {meta.icon}
+                      </div>
+
+                      <div>
+                        <div className="flex flex-wrap items-center gap-2.5">
+                          {/* Explicit Aternos Label */}
+                          <h3 className="text-lg md:text-xl font-black text-white tracking-tight">
+                            {meta.label}
+                          </h3>
+
+                          {/* Explicit Dimension Badge */}
+                          <span className={`px-2.5 py-0.5 rounded-full text-[11px] font-mono font-bold border ${meta.badgeClass}`}>
+                            {meta.dimensionName}
                           </span>
-                        ) : (
+
+                          {/* Active Status Badge */}
+                          {world.isDefault && (
+                            <span className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-theme-500/20 text-theme-400 border border-theme-500/40">
+                              Active World
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Description & Technical Metadata */}
+                        <p className="text-xs text-zinc-400 mt-1 line-clamp-1">
+                          {meta.description}
+                        </p>
+
+                        <div className="flex flex-wrap items-center gap-3 mt-2 text-xs font-mono text-zinc-400">
+                          <span className="text-zinc-500">Folder: <code className="text-zinc-300">/{world.name}</code></span>
+                          <span>•</span>
+                          <span className="flex items-center gap-1">
+                            <HardDrive className="w-3.5 h-3.5 text-zinc-500" /> {world.size}
+                          </span>
+                          <span>•</span>
+                          <span>{world.regionFiles} region files</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* RIGHT: DIRECT ATERNOS ACTION BUTTONS */}
+                    <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto pt-2 lg:pt-0 border-t lg:border-t-0 border-border-subtle">
+                      {/* UPLOAD BUTTON */}
+                      <button
+                        onClick={() => {
+                          setUploadModalWorld(world.name);
+                          setUploadFile(null);
+                        }}
+                        className="px-4 py-2.5 bg-theme-600 hover:bg-theme-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-theme-600/20"
+                        title="Upload world archive (.zip)"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Upload
+                      </button>
+
+                      {/* DOWNLOAD BUTTON */}
+                      <button
+                        onClick={() => handleDownloadWorld(world.name)}
+                        disabled={!world.exists}
+                        className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-zinc-200 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        title="Download complete world as .zip"
+                      >
+                        <Download className="w-3.5 h-3.5 text-zinc-400" />
+                        Download
+                      </button>
+
+                      {/* GENERATE / RESET BUTTON */}
+                      <button
+                        onClick={() => {
+                          setGenerateModalWorld(world.name);
+                          setIsNewWorldModal(false);
+                          setGenSeed("");
+                        }}
+                        className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                        title="Reset & Generate with new seed or settings"
+                      >
+                        <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
+                        Generate
+                      </button>
+
+                      {/* OPTIMIZE BUTTON */}
+                      <button
+                        onClick={() => {
+                          setOptimizeModalWorld(world.name);
+                          setOptimizeResult(null);
+                        }}
+                        disabled={!world.exists}
+                        className="px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
+                        title="Clean unused chunks & save disk space"
+                      >
+                        <Zap className="w-3.5 h-3.5 text-amber-400" />
+                        Optimize
+                      </button>
+
+                      {/* EXTRA ACTIONS FOR CUSTOM WORLDS */}
+                      {!world.isDefault && world.name !== "world" && (
+                        <div className="flex items-center gap-1.5">
                           <button
                             onClick={() => handleSetActiveWorld(world.name)}
-                            className="px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold bg-white/5 hover:bg-theme-500/20 text-zinc-400 hover:text-theme-300 border border-white/10 hover:border-theme-500/30 transition-all flex items-center gap-1 cursor-pointer"
-                            title="Set this world as the primary server world"
+                            className="p-2.5 bg-white/5 hover:bg-theme-500/20 text-zinc-400 hover:text-theme-300 border border-white/10 rounded-xl text-xs transition-all flex items-center justify-center cursor-pointer"
+                            title="Set as primary level-name in server.properties"
                           >
-                            <PlayCircle className="w-3 h-3 text-theme-400" /> Set as Active
+                            <PlayCircle className="w-3.5 h-3.5 text-theme-400" />
                           </button>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap items-center gap-3 mt-1.5 text-xs font-mono text-zinc-400">
-                        <span className="flex items-center gap-1">
-                          <HardDrive className="w-3.5 h-3.5 text-zinc-500" /> {world.size}
-                        </span>
-                        <span>•</span>
-                        <span>{world.regionFiles} region files</span>
-                        <span>•</span>
-                        <span className="text-zinc-300">{world.worldVersion}</span>
-                      </div>
+                          
+                          <button
+                            onClick={() => setDeleteConfirmWorld(world.name)}
+                            className="p-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-xs transition-all flex items-center justify-center cursor-pointer"
+                            title="Delete custom world"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  </div>
 
-                  {/* ATERNOS ACTION BUTTONS (HORIZONTAL GRID / PILLS) */}
-                  <div className="flex flex-wrap items-center gap-2 w-full lg:w-auto">
-                    {/* OPTIMIZE BUTTON */}
-                    <button
-                      onClick={() => {
-                        setOptimizeModalWorld(world.name);
-                        setOptimizeResult(null);
-                      }}
-                      disabled={!world.exists}
-                      className="px-4 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 hover:border-amber-500/50 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-sm disabled:opacity-40"
-                      title="Optimize world & remove unused chunks"
-                    >
-                      <Zap className="w-3.5 h-3.5 text-amber-400" />
-                      Optimize
-                    </button>
-
-                    {/* UPLOAD BUTTON */}
-                    <button
-                      onClick={() => {
-                        setUploadModalWorld(world.name);
-                        setUploadFile(null);
-                      }}
-                      className="px-4 py-2.5 bg-theme-600 hover:bg-theme-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-theme-600/20"
-                      title="Upload world .zip or folder"
-                    >
-                      <Upload className="w-3.5 h-3.5" />
-                      Upload
-                    </button>
-
-                    {/* DOWNLOAD BUTTON */}
-                    <button
-                      onClick={() => handleDownloadWorld(world.name)}
-                      disabled={!world.exists}
-                      className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-zinc-200 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-40"
-                      title="Download world as .zip"
-                    >
-                      <Download className="w-3.5 h-3.5 text-zinc-400" />
-                      Download
-                    </button>
-
-                    {/* FILES BUTTON */}
-                    {onNavigateToFileManager && (
-                      <button
-                        onClick={onNavigateToFileManager}
-                        className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                        title="Browse world folder in File Manager"
-                      >
-                        <FolderTree className="w-3.5 h-3.5 text-zinc-400" />
-                        Files
-                      </button>
-                    )}
-
-                    {/* GENERATE BUTTON */}
-                    <button
-                      onClick={() => {
-                        setGenerateModalWorld(world.name);
-                        setIsNewWorldModal(false);
-                        setGenSeed("");
-                      }}
-                      className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
-                      title="Generate new world with custom seed"
-                    >
-                      <SlidersHorizontal className="w-3.5 h-3.5 text-zinc-400" />
-                      Generate
-                    </button>
-
-                    {/* DELETE BUTTON (For non-default worlds) */}
-                    {!world.isDefault && world.name !== "world" && (
-                      <button
-                        onClick={() => setDeleteConfirmWorld(world.name)}
-                        className="p-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 rounded-xl text-xs font-bold transition-all flex items-center justify-center cursor-pointer"
-                        title="Delete world"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 
-        {/* ATERNOS-STYLE KNOWLEDGE BASE & HELP ARTICLES ACCORDION */}
+        {/* ATERNOS-STYLE CLEAN KNOWLEDGE BASE ACCORDION */}
         <div className="space-y-3 pt-4">
-          <h3 className="text-sm font-bold font-mono tracking-wider text-zinc-400 uppercase flex items-center gap-2">
-            <HelpCircle className="w-4 h-4 text-theme-500" /> Help & Guides
+          <h3 className="text-xs font-bold font-mono tracking-wider text-zinc-400 uppercase flex items-center gap-2">
+            <HelpCircle className="w-4 h-4 text-theme-500" /> Guides & Dimension Details
           </h3>
 
-          {/* ARTICLE 1: UPLOAD A WORLD */}
+          {/* GUIDE 1: MINECRAFT DIMENSIONS EXPLAINED */}
+          <div className="bg-black/40 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
+            <button
+              onClick={() => setExpandedDocs(prev => ({ ...prev, dimensions: !prev.dimensions }))}
+              className="w-full p-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+            >
+              <div className="flex items-center gap-3">
+                <Globe className="w-4 h-4 text-emerald-400" />
+                <span className="text-sm font-bold text-white">How dimensions work in Minecraft</span>
+              </div>
+              {expandedDocs.dimensions ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
+            </button>
+            {expandedDocs.dimensions && (
+              <div className="p-4 pt-0 text-xs text-zinc-400 space-y-3 border-t border-border-subtle leading-relaxed">
+                <p>
+                  Minecraft servers manage three distinct dimensions for every gameplay world:
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-1">
+                  <div className="p-3 bg-emerald-500/5 border border-emerald-500/20 rounded-xl space-y-1">
+                    <p className="font-bold text-emerald-300">1. World (Overworld)</p>
+                    <p className="text-[11px] text-zinc-400">Stores surface terrain, oceans, villages, mineshafts, player homes, and spawn points.</p>
+                  </div>
+                  <div className="p-3 bg-rose-500/5 border border-rose-500/20 rounded-xl space-y-1">
+                    <p className="font-bold text-rose-300">2. World Nether</p>
+                    <p className="text-[11px] text-zinc-400">Stores nether portals, lava lakes, fortresses, bastions, and piglin structures.</p>
+                  </div>
+                  <div className="p-3 bg-purple-500/5 border border-purple-500/20 rounded-xl space-y-1">
+                    <p className="font-bold text-purple-300">3. World End</p>
+                    <p className="text-[11px] text-zinc-400">Stores the central dragon island, outer End islands, chorus plants, and End Cities.</p>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* GUIDE 2: UPLOAD A WORLD */}
           <div className="bg-black/40 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
             <button
               onClick={() => setExpandedDocs(prev => ({ ...prev, upload: !prev.upload }))}
-              className="w-full p-4.5 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+              className="w-full p-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-3">
                 <Upload className="w-4 h-4 text-theme-400" />
-                <span className="text-sm font-bold text-white">Upload a world</span>
+                <span className="text-sm font-bold text-white">How to upload custom world maps</span>
               </div>
               {expandedDocs.upload ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
             </button>
             {expandedDocs.upload && (
-              <div className="p-4.5 pt-0 text-xs text-zinc-400 space-y-3 border-t border-border-subtle leading-relaxed">
+              <div className="p-4 pt-0 text-xs text-zinc-400 space-y-2 border-t border-border-subtle leading-relaxed">
                 <p>
-                  You can easily upload any Minecraft world map directly to your server, whether it's a pre-made adventure map or your custom-built world, so you can explore it with friends in just a few simple steps!
+                  Compress your world folder into a <code className="text-theme-400">.zip</code> file containing <code className="text-zinc-300">level.dat</code> and the <code className="text-zinc-300">region/</code> directory. Click <strong>Upload</strong> on the target dimension card; the panel will automatically extract and configure everything.
                 </p>
-                <div className="bg-zinc-900/60 p-3.5 rounded-xl border border-border space-y-2">
-                  <p className="font-bold text-zinc-200">Prepare your world:</p>
-                  <ul className="list-disc pl-4 space-y-1 text-zinc-400">
-                    <li><strong className="text-zinc-300">As a .zip file:</strong> Compress the entire world folder into a <code className="text-theme-400">.zip</code> archive. Ensure it contains standard folders like <code className="text-zinc-300">region</code>, <code className="text-zinc-300">data</code>, <code className="text-zinc-300">datapacks</code> and <code className="text-zinc-300">level.dat</code>.</li>
-                    <li><strong className="text-zinc-300">Auto-Extraction:</strong> The panel will automatically unpack the contents directly into the server's root world folder and remove the uploaded zip file cleanly.</li>
-                  </ul>
-                </div>
               </div>
             )}
           </div>
 
-          {/* ARTICLE 2: OPTIMIZE OPTION */}
+          {/* GUIDE 3: OPTIMIZE OPTION */}
           <div className="bg-black/40 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
             <button
               onClick={() => setExpandedDocs(prev => ({ ...prev, optimize: !prev.optimize }))}
-              className="w-full p-4.5 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
+              className="w-full p-4 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
             >
               <div className="flex items-center gap-3">
                 <Zap className="w-4 h-4 text-amber-400" />
-                <span className="text-sm font-bold text-white">World option: Optimize</span>
+                <span className="text-sm font-bold text-white">Optimize option (Disk Space Saver)</span>
               </div>
               {expandedDocs.optimize ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
             </button>
             {expandedDocs.optimize && (
-              <div className="p-4.5 pt-0 text-xs text-zinc-400 space-y-3 border-t border-border-subtle leading-relaxed">
+              <div className="p-4 pt-0 text-xs text-zinc-400 space-y-2 border-t border-border-subtle leading-relaxed">
                 <p>
-                  A large portion of server storage is often occupied by world files. Minecraft generates thousands of chunks around players and saves them even if players never returned. To make sure your server stays fast and within limits, the <strong className="text-zinc-200">Optimize</strong> option cleans unused chunks and empty region files.
-                </p>
-                <div className="bg-zinc-900/60 p-3.5 rounded-xl border border-border space-y-1">
-                  <p className="font-bold text-zinc-200">When should I use it?</p>
-                  <p>World optimization is 100% compatible with all Minecraft worlds (Vanilla, Paper, Spigot, Fabric, Forge). Custom structures, blocks, and inventories remain completely untouched.</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* ARTICLE 3: DOWNLOAD YOUR WORLD */}
-          <div className="bg-black/40 backdrop-blur-xl border border-border rounded-2xl overflow-hidden">
-            <button
-              onClick={() => setExpandedDocs(prev => ({ ...prev, download: !prev.download }))}
-              className="w-full p-4.5 flex items-center justify-between text-left hover:bg-white/[0.02] transition-colors cursor-pointer"
-            >
-              <div className="flex items-center gap-3">
-                <Download className="w-4 h-4 text-emerald-400" />
-                <span className="text-sm font-bold text-white">Download your world</span>
-              </div>
-              {expandedDocs.download ? <ChevronUp className="w-4 h-4 text-zinc-400" /> : <ChevronDown className="w-4 h-4 text-zinc-400" />}
-            </button>
-            {expandedDocs.download && (
-              <div className="p-4.5 pt-0 text-xs text-zinc-400 space-y-3 border-t border-border-subtle leading-relaxed">
-                <p>
-                  Click the <strong className="text-zinc-200">Download</strong> button on any world card to instantly stream a complete <code className="text-theme-400">.zip</code> archive of your world. You can extract this folder directly into your local <code className="text-zinc-300">.minecraft/saves</code> directory to play in singleplayer mode!
+                  As players explore, Minecraft generates chunk files that take up hundreds of megabytes. The <strong>Optimize</strong> button removes empty chunk headers and unneeded cache data while keeping all player builds and inventories completely safe.
                 </p>
               </div>
             )}
@@ -573,7 +602,7 @@ export default function WorldManager({
             </div>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Select a world archive (<code className="text-zinc-300">.zip, .tar, .gz</code>). The system will automatically detect the world structure, extract it directly to <code className="text-theme-400">/{uploadModalWorld}</code>, and clean the zip archive.
+              Select a world archive (<code className="text-zinc-300">.zip, .tar, .gz</code>). The panel will automatically unpack the files into <code className="text-theme-400">/{uploadModalWorld}</code> and delete the temporary archive.
             </p>
 
             <div className="border-2 border-dashed border-zinc-700 hover:border-theme-500 rounded-2xl p-6 text-center transition-colors">
@@ -590,7 +619,7 @@ export default function WorldManager({
                   {uploadFile ? uploadFile.name : "Click or drag & drop world .zip archive"}
                 </span>
                 <span className="text-[11px] font-mono text-zinc-500">
-                  {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(2)} MB` : "Supports .zip, .tar, .gz containing region & level.dat"}
+                  {uploadFile ? `${(uploadFile.size / (1024 * 1024)).toFixed(2)} MB` : "Supports .zip containing region and level.dat"}
                 </span>
               </label>
             </div>
@@ -623,7 +652,7 @@ export default function WorldManager({
                 className="px-6 py-2.5 bg-theme-600 hover:bg-theme-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-theme-600/20 cursor-pointer disabled:opacity-50"
               >
                 {isProcessingUpload ? (
-                  <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Uploading & Placing...</>
+                  <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Extracting...</>
                 ) : (
                   <><Upload className="w-3.5 h-3.5" /> Upload & Extract</>
                 )}
@@ -653,7 +682,7 @@ export default function WorldManager({
             </div>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Minecraft creates thousands of empty or unused chunk region files that consume storage. Optimizing the world cleans stale chunk data and empty MCA headers without altering your placed blocks, player inventories or builds.
+              Clean up stale chunk caches and empty region files to reclaim server disk space. Placed blocks, player homes, and chests remain untouched.
             </p>
 
             {optimizeResult && (
@@ -695,7 +724,7 @@ export default function WorldManager({
                   className="px-6 py-2.5 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-xl text-xs transition-all flex items-center gap-2 shadow-lg shadow-amber-500/20 cursor-pointer disabled:opacity-50"
                 >
                   {isOptimizing ? (
-                    <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Optimizing Chunks...</>
+                    <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Optimizing...</>
                   ) : (
                     <><Zap className="w-3.5 h-3.5" /> Start Optimization</>
                   )}
@@ -707,7 +736,7 @@ export default function WorldManager({
       )}
 
       {/* ========================================================================= */}
-      {/* 3. GENERATE / CREATE WORLD MODAL */}
+      {/* 3. GENERATE / RESET WORLD MODAL */}
       {/* ========================================================================= */}
       {(generateModalWorld || isNewWorldModal) && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-in fade-in duration-200">
@@ -716,7 +745,7 @@ export default function WorldManager({
               <div className="flex items-center gap-2.5">
                 <SlidersHorizontal className="w-5 h-5 text-theme-500" />
                 <h3 className="text-lg font-black text-white">
-                  {isNewWorldModal ? "Create New World" : `Generate / Reset '${generateModalWorld}'`}
+                  {isNewWorldModal ? "Generate New World" : `Generate / Reset '${generateModalWorld}'`}
                 </h3>
               </div>
               <button
@@ -731,9 +760,7 @@ export default function WorldManager({
             </div>
 
             <p className="text-xs text-zinc-400 leading-relaxed">
-              {isNewWorldModal 
-                ? "Create a new Minecraft world (e.g. survival, creative, skyblock). The world will generate fresh when the server starts."
-                : `Generating a new world will reset existing files for '/${generateModalWorld}' and prepare a fresh generation upon server start.`}
+              Configure generation settings for this world. When the server boots up, Minecraft will create a brand new world matching these parameters.
             </p>
 
             <div className="space-y-3.5 text-xs">
@@ -742,7 +769,7 @@ export default function WorldManager({
                   <label className="block text-zinc-300 font-bold mb-1.5">World Folder Name</label>
                   <input
                     type="text"
-                    placeholder="e.g. survival, lobby, minigames"
+                    placeholder="e.g. survival, lobby, skyblock"
                     value={newWorldName}
                     onChange={(e) => setNewWorldName(e.target.value)}
                     className="w-full bg-black/40 border border-zinc-700 rounded-xl p-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-theme-500"
@@ -754,7 +781,7 @@ export default function WorldManager({
                 <label className="block text-zinc-300 font-bold mb-1.5">World Seed (Optional)</label>
                 <input
                   type="text"
-                  placeholder="e.g. 19284729384 or leave blank for random"
+                  placeholder="Leave empty for a random seed"
                   value={genSeed}
                   onChange={(e) => setGenSeed(e.target.value)}
                   className="w-full bg-black/40 border border-zinc-700 rounded-xl p-2.5 text-white placeholder-zinc-500 focus:outline-none focus:border-theme-500"
@@ -769,7 +796,7 @@ export default function WorldManager({
                   className="w-full bg-black/40 border border-zinc-700 rounded-xl p-2.5 text-white focus:outline-none focus:border-theme-500 cursor-pointer"
                 >
                   <option value="default">Default</option>
-                  <option value="flat">Flat</option>
+                  <option value="flat">Superflat</option>
                   <option value="largeBiomes">Large Biomes</option>
                   <option value="amplified">Amplified</option>
                 </select>
@@ -793,7 +820,7 @@ export default function WorldManager({
                     onChange={(e) => setGenStructures(e.target.checked)}
                     className="rounded accent-theme-500"
                   />
-                  <span className="text-zinc-200 font-medium">Structures</span>
+                  <span className="text-zinc-200 font-medium">Generate Structures</span>
                 </label>
               </div>
 
@@ -829,7 +856,7 @@ export default function WorldManager({
                 className="px-6 py-2.5 bg-theme-600 hover:bg-theme-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-2 shadow-lg shadow-theme-600/20 cursor-pointer disabled:opacity-50"
               >
                 {isGenerating ? (
-                  <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Configuring World...</>
+                  <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Applying...</>
                 ) : (
                   <><SlidersHorizontal className="w-3.5 h-3.5" /> {isNewWorldModal ? "Create World" : "Generate World"}</>
                 )}
@@ -850,7 +877,7 @@ export default function WorldManager({
               <h3 className="text-lg font-black text-white">Delete '{deleteConfirmWorld}'?</h3>
             </div>
             <p className="text-xs text-zinc-400 leading-relaxed">
-              Are you sure you want to permanently delete the world folder <code className="text-rose-400">/{deleteConfirmWorld}</code>? This action cannot be undone.
+              Are you sure you want to permanently remove the world folder <code className="text-rose-400">/{deleteConfirmWorld}</code>? This action cannot be undone.
             </p>
             <div className="flex items-center justify-end gap-3 pt-2">
               <button
@@ -872,7 +899,7 @@ export default function WorldManager({
         </div>
       )}
 
-      {isProcessingUpload && <LoadingOverlay message="Extracting world files and configuring server..." />}
+      {isProcessingUpload && <LoadingOverlay message="Extracting world files and placing into server..." />}
     </div>
   );
 }
